@@ -160,6 +160,7 @@ IF(HAIKU)
     list(APPEND HEADER_LITEHTML
         containers/haiku/container_haiku.h
     )
+    include_directories(/boot/system/develop/headers/private/netservices /boot/system/develop/headers/private/netservices2)
 ENDIF(HAIKU)
 
 set(PROJECT_LIB_VERSION ${PROJECT_MAJOR}.${PROJECT_MINOR}.0)
@@ -181,6 +182,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 	CXX_STANDARD 17
 	C_STANDARD 99
 	PUBLIC_HEADER "${HEADER_LITEHTML}"
+	RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/build"
 )
 
 # Export litehtml includes.
@@ -193,13 +195,16 @@ target_include_directories(${PROJECT_NAME} PRIVATE include/${PROJECT_NAME})
 # Gumbo
 target_link_libraries(${PROJECT_NAME} PUBLIC gumbo)
 
+IF(HAIKU)
+    target_link_libraries(${PROJECT_NAME} PUBLIC netservices2)
+ENDIF(HAIKU)
+
 # install and export
 install(TARGETS ${PROJECT_NAME}
 	EXPORT litehtmlTargets
 	RUNTIME DESTINATION bin COMPONENT libraries
 	ARCHIVE DESTINATION lib${LIB_SUFFIX} COMPONENT libraries
 	LIBRARY DESTINATION lib${LIB_SUFFIX} COMPONENT libraries
-	PUBLIC_HEADER DESTINATION include/litehtml
 )
 install(FILES cmake/litehtmlConfig.cmake DESTINATION lib${LIB_SUFFIX}/cmake/litehtml)
 install(EXPORT litehtmlTargets FILE litehtmlTargets.cmake DESTINATION lib${LIB_SUFFIX}/cmake/litehtml)

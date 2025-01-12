@@ -16,6 +16,7 @@
 #include <map>
 #include <string>
 
+#include <Url.h>
 #include <View.h>
 
 class BBitmap;
@@ -35,10 +36,12 @@ public:
 
 	virtual								~LiteHtmlView();
 
-			void						SetContext(formatting_context* ctx);
-			void						RenderFile(const char* localFilePath);
-			void						RenderHTML(const std::string& htmlText);
-
+    void        						SetContext(formatting_context* ctx);
+    void		        				RenderFile(const char* localFilePath);
+    void				        		RenderHtml(const BString& htmlText);
+    void						        RenderUrl(const BUrl& url);
+    void                                RenderUrl(const char* fileOrHttpUrl);
+    const BString&                      FetchHttpContent(const BUrl& fileOrHttpUrl);
 
 	virtual uint_ptr			        create_font(const char* faceName, int size, int weight, litehtml::font_style italic, unsigned int decoration, font_metrics* fm) override;
 	virtual void						delete_font(uint_ptr hFont) override;
@@ -84,14 +87,14 @@ public:
 	virtual void						GetPreferredSize(float* width, float* height) override;
 
 protected:
-	void								make_url(const char* url, const char* basepath, string& out);
+	void								make_url(const char* relativeUrl, const char* baseUrl, BUrl& outUrl);
 
 private:
-	formatting_context*	                 fContext;
-	document::ptr				         m_html;
-	std::map<const std::string,BBitmap*> m_images;
-	string					             m_base_url;
-	string					             m_url;
+	formatting_context*	                fContext;
+	document::ptr				        m_html;
+	std::map<uint32 ,BBitmap*>          m_images;
+	string					            m_base_url;
+	string					            m_url;
 };
 
 #endif

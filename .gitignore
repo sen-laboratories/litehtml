@@ -13,6 +13,7 @@
 
 # Compiled Dynamic libraries
 *.so
+*.so.*
 *.dylib
 *.dll
 
@@ -32,9 +33,11 @@
 *.app
 
 # generated stuff
+build/
 generated/
 objects.*
 
 # CMake
 CMakeFiles/*
 CMakeCache.txt
+src/*/CMakeFiles/*
