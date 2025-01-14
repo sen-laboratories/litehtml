@@ -17,7 +17,6 @@
 #include <Path.h>
 #include <TranslationUtils.h>
 
-#include <private/netservices2/HttpSession.h>
 #include <private/netservices2/HttpRequest.h>
 #include <private/netservices2/HttpResult.h>
 #include <private/netservices2/NetServicesDefs.h>
@@ -35,10 +34,12 @@ LiteHtmlView::LiteHtmlView(BRect frame, const char *name)
 {
 	SetDrawingMode(B_OP_OVER);
 	SetFont(be_plain_font);
+    fHttpSession = new BHttpSession();
 }
 
 LiteHtmlView::~LiteHtmlView()
 {
+    delete fHttpSession;
 }
 
 void
@@ -151,87 +152,98 @@ LiteHtmlView::FetchHttpContent(const BUrl& fileOrHttpUrl)
     }
     if (isFile)
     {
-        std::cout << "  Loading file from URL " << fileOrHttpUrl << std::endl;
-        // Get parent folder for the base url
-        BString pathFromUrl;
-        pathFromUrl = BUrl::UrlDecode(BString(fileOrHttpUrl.Path()));
+        return FetchLocalContentFromFile(fileOrHttpUrl);
+    } else {
+        return FetchRemoteContentFromUrl(fileOrHttpUrl);
+	}
+}
 
-        BPath htmlPath(pathFromUrl);
-        std::cout << "htmlPath is " << htmlPath.Path() << std::endl;
+const BString&
+LiteHtmlView::FetchLocalContentFromFile(const BUrl& fileOrHttpUrl)
+{
+    std::cout << "  Loading file from URL " << fileOrHttpUrl << std::endl;
+    // Get parent folder for the base url
+    BString pathFromUrl;
+    pathFromUrl = BUrl::UrlDecode(BString(fileOrHttpUrl.Path()));
 
-        BPath parentDir;
-        htmlPath.GetParent(&parentDir);
-        BString baseUrl(fileOrHttpUrl.Protocol());
-        baseUrl << "://" << parentDir.Path() << "/";
-        set_base_url(baseUrl);
+    BPath htmlPath(pathFromUrl);
+    std::cout << "htmlPath is " << htmlPath.Path() << std::endl;
 
-        BFile htmlFile(htmlPath.Path(), B_READ_ONLY);
-        status_t result = htmlFile.InitCheck();
-        if (result != B_OK)
-        {
-            std::cout << "error opening file '" << htmlPath.Path() << "':"
-                      << strerror(result) << std::endl;
-            return *(new BString(""));
-        }
+    BPath parentDir;
+    htmlPath.GetParent(&parentDir);
+    BString baseUrl(fileOrHttpUrl.Protocol());
+    baseUrl << "://" << parentDir.Path() << "/";
+    set_base_url(baseUrl);
 
-        off_t size;
-        htmlFile.GetSize(&size);
-        if (size <= 0) {
-            std::cout << "error: empty/invalid file '" << fileOrHttpUrl << "':"
+    BFile htmlFile(htmlPath.Path(), B_READ_ONLY);
+    status_t result = htmlFile.InitCheck();
+    if (result != B_OK)
+    {
+        std::cout << "error opening file '" << htmlPath.Path() << "':"
+                  << strerror(result) << std::endl;
+        return *(new BString(""));
+    }
+
+    off_t size;
+    htmlFile.GetSize(&size);
+    if (size <= 0) {
+        std::cout << "error: empty/invalid file '" << fileOrHttpUrl << "':"
+          << strerror(result) << std::endl;
+        return *(new BString(""));
+    }
+    else
+    {
+        char buffer[size+1];
+        size_t bytesRead = htmlFile.Read(buffer, size);
+        if (bytesRead < 0) {
+            std::cout << "error reading from file '" << fileOrHttpUrl << "':"
               << strerror(result) << std::endl;
-            return *(new BString(""));
+            return NULL;
+        }
+        buffer[size] = '\0';
+        htmlFile.Unset();
+
+        return *(new BString(buffer));
+    }
+}
+
+const BString&
+LiteHtmlView::FetchRemoteContentFromUrl(const BUrl& fileOrHttpUrl)
+{
+    std::cout << "  fetching from URL " << fileOrHttpUrl.UrlString() << std::endl;
+    BString baseUrl(fileOrHttpUrl.Protocol());
+    baseUrl << "://" << fileOrHttpUrl.Host() << "/";
+    set_base_url(baseUrl);
+
+    try {
+        BHttpRequest&& request = BHttpRequest(fileOrHttpUrl);
+        BHttpResult result = fHttpSession->Execute(std::move(request));
+        if (result.Status().code >= 200 && result.Status().code <= 400)
+        {
+            std::cout << "  Request successful, got "
+                      << (! result.Body().text.has_value() ? "empty " : "") << "response "
+                      << (  result.Body().text.has_value() ? "with body" : "")
+                      << " and status " << result.Status().code << ": " << result.Status().text
+                      << std::endl;
+
+            BString *htmlBody = new BString(result.Body().text.value_or(""));
+            return (*htmlBody);
         }
         else
         {
-            char buffer[size+1];
-            size_t bytesRead = htmlFile.Read(buffer, size);
-            if (bytesRead < 0) {
-                std::cout << "error reading from file '" << fileOrHttpUrl << "':"
-                  << strerror(result) << std::endl;
-                return NULL;
-            }
-            buffer[size] = '\0';
-            htmlFile.Unset();
-
-            return *(new BString(buffer));
-        }
-    } else {
-        std::cout << "  fetching from URL " << fileOrHttpUrl.UrlString() << std::endl;
-        BString baseUrl(fileOrHttpUrl.Protocol());
-        baseUrl << "://" << fileOrHttpUrl.Host() << "/";
-        set_base_url(baseUrl);
-
-        BHttpRequest request(fileOrHttpUrl);
-        BHttpSession session;
-        try {
-            BHttpResult result = session.Execute(std::move(request));
-            if (result.Status().code >= 200 && result.Status().code <= 400)
-            {
-                std::cout << "  Request successful, got "
-                          << (! result.Body().text.has_value() ? "empty " : "") << "response "
-                          << (  result.Body().text.has_value() ? "with body" : "")
-                          << " and status " << result.Status().code << ": " << result.Status().text
-                          << std::endl;
-
-                auto htmlBody = new BString(result.Body().text.value_or(""));
-                return (*htmlBody);
-            }
-            else
-            {
-                std::cout << "HTTP error " << result.Status().code
-                          << " reading from URL '" << fileOrHttpUrl << "':"
-                          << result.Status().text << std::endl;
-                return *(new BString(""));
-            }
-        } catch (const BPrivate::Network::BNetworkRequestError& err) {
-            std::cout << "network error " << err.ErrorCode()
-              << " reading from URL '" << fileOrHttpUrl << "':"
-              << err.Message() << ", detail: "
-              << err.DebugMessage() << std::endl;
-
+            std::cout << "HTTP error " << result.Status().code
+                      << " reading from URL '" << fileOrHttpUrl << "':"
+                      << result.Status().text << std::endl;
             return *(new BString(""));
         }
-	}
+    } catch (const BPrivate::Network::BNetworkRequestError& err) {
+        std::cout << "network error " << err.ErrorCode()
+          << " reading from URL '" << fileOrHttpUrl << "':"
+          << err.Message() << ", detail: "
+          << err.DebugMessage() << std::endl;
+
+        return *(new BString(""));
+    }
 }
 
 void

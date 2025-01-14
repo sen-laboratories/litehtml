@@ -19,6 +19,8 @@
 #include <Url.h>
 #include <View.h>
 
+#include <private/netservices2/HttpSession.h>
+
 class BBitmap;
 
 using namespace litehtml;
@@ -88,9 +90,12 @@ public:
 
 protected:
 	void								make_url(const char* relativeUrl, const char* baseUrl, BUrl& outUrl);
+    const BString&                      FetchLocalContentFromFile(const BUrl& fileOrHttpUrl);
+    const BString&                      FetchRemoteContentFromUrl(const BUrl& fileOrHttpUrl);
 
 private:
 	formatting_context*	                fContext;
+    BPrivate::Network::BHttpSession*    fHttpSession;
 	document::ptr				        m_html;
 	std::map<uint32 ,BBitmap*>          m_images;
 	string					            m_base_url;
