@@ -467,21 +467,12 @@ LiteHtmlView::load_image( const char* src,
 void
 LiteHtmlView::make_url(const char* relativeUrl, const char* baseUrl, BUrl& outUrl)
 {
-    if (baseUrl == NULL) baseUrl = "";
+    if (baseUrl == NULL || (baseUrl[0] == '\0')) {
+        baseUrl = m_base_url.c_str();
+    }
     if (relativeUrl == NULL) relativeUrl = "";
     std::cout << "make_url: base url = " << baseUrl << ", relative path = " << relativeUrl << std::endl;
-/*
-    BString url(baseUrl);
-    if (! url.IsEmpty()) {
-        if (! url.EndsWith("/")) {
-            url.Append("/");
-        }
-    } else {
-        if (! m_base_url.empty()) {
-            url = m_base_url.c_str();
-        }
-    }
-*/
+
     // strip current dir ./ from relative url since we always use an absolute url in the end
     BString path(relativeUrl);
     if (path.StartsWith("./")) {
@@ -729,9 +720,13 @@ LiteHtmlView::set_cursor(const char* cursor)
 }
 
 void
-LiteHtmlView::import_css(string& s1, const string& s2, string& s3)
+LiteHtmlView::import_css(string& text, const string& url, string& baseUrl)
 {
-	std::cout << "import_css: NOT YET IMPLEMENTED" << std::endl;
+	BUrl absoluteUrl;
+	make_url(url.c_str(), baseUrl.c_str(), absoluteUrl);
+
+	std::cout << "import_css from " << absoluteUrl.UrlString() << std::endl;
+	text = FetchHttpContent(absoluteUrl);
 }
 
 void
