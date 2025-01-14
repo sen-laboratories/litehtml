@@ -163,6 +163,8 @@ IF(HAIKU)
     include_directories(/boot/system/develop/headers/private/netservices /boot/system/develop/headers/private/netservices2)
 ENDIF(HAIKU)
 
+include_directories(include include/litehtml)
+
 set(PROJECT_LIB_VERSION ${PROJECT_MAJOR}.${PROJECT_MINOR}.0)
 set(PROJECT_SO_VERSION ${PROJECT_MAJOR})
 

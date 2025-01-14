@@ -10,7 +10,9 @@
 #include <iostream>
 #include <map>
 
+#include <Application.h>
 #include <Bitmap.h>
+#include <Cursor.h>
 #include <String.h>
 #include <Entry.h>
 #include <File.h>
@@ -26,14 +28,14 @@ using namespace BPrivate::Network;
 
 LiteHtmlView::LiteHtmlView(BRect frame, const char *name)
 	: BView(frame, name, B_FOLLOW_ALL, B_WILL_DRAW),
-	fContext(NULL),
-	m_html(NULL),
+	m_doc(NULL),
 	m_images(),
 	m_base_url(),
 	m_url()
 {
 	SetDrawingMode(B_OP_OVER);
 	SetFont(be_plain_font);
+    SetMouseEventMask(B_MOUSE_MOVED, B_FULL_POINTER_HISTORY);
     fHttpSession = new BHttpSession();
 }
 
@@ -43,29 +45,7 @@ LiteHtmlView::~LiteHtmlView()
 }
 
 void
-LiteHtmlView::SetContext(formatting_context* ctx)
-{
-	fContext = ctx;
-}
-
-void
-LiteHtmlView::RenderFile(const char* localFilePath)
-{
-	std::cout << "RenderFile" << std::endl;
-
-    const char* html = FetchHttpContent(BUrl(localFilePath));
-    if (html != NULL)
-    {
-        RenderHtml(html);
-    }
-    else
-    {
-        std::cout << "RenderUrl aborted, no content received." << std::endl;
-    }
-}
-
-void
-LiteHtmlView::RenderUrl(const char* fileOrHttpUrl)
+LiteHtmlView::RenderUrl(const char* fileOrHttpUrl, const char* masterStylesPath, const char* userStylesPath)
 {
     std::cout << "RenderUrl from string " << fileOrHttpUrl << std::endl;
 
@@ -78,18 +58,18 @@ LiteHtmlView::RenderUrl(const char* fileOrHttpUrl)
             return;
         }
     }
-    RenderUrl(url);
+    RenderUrl(url, masterStylesPath, userStylesPath);
 }
 
 void
-LiteHtmlView::RenderUrl(const BUrl& url)
+LiteHtmlView::RenderUrl(const BUrl& url, const char* masterStylesPath, const char* userStylesPath)
 {
 	std::cout << "RenderUrl from URL " << url << std::endl;
 
     const char* html = FetchHttpContent(url);
     if (html != NULL)
     {
-        RenderHtml(html);
+        RenderHtml(html, masterStylesPath, userStylesPath);
     }
     else
     {
@@ -98,14 +78,14 @@ LiteHtmlView::RenderUrl(const BUrl& url)
 }
 
 void
-LiteHtmlView::RenderHtml(const BString& htmlText)
+LiteHtmlView::RenderHtml(const BString& htmlText, const char* masterStylesPath, const char* userStylesPath)
 {
 	std::cout << "RenderHTML" << std::endl;
 
-	// now use this string
-	m_html = document::createFromString(htmlText.String(), this);
+	// todo: load optionally supplied styles from paths and pass string content ref here
+	m_doc = document::createFromString(htmlText.String(), this/*, string(masterStylesPath), string(userStylesPath)*/);
 
-	if (m_html)
+	if (m_doc)
 	{
 		std::cout << "Successfully read html" << std::endl;
 		// success
@@ -256,27 +236,79 @@ LiteHtmlView::Draw(BRect b)
 
 	// b only part of the window, but we need to draw the whole lot
 
-	if (NULL != m_html) {
+	if (NULL != m_doc) {
 		BPoint leftTop = bounds.LeftTop();
 		position clip(leftTop.x,leftTop.y,
 			bounds.Width(),bounds.Height());
-		m_html->render(bounds.Width());
-		m_html->draw((uint_ptr) this,0,0,&clip);
+		m_doc->render(bounds.Width());
+		m_doc->draw((uint_ptr) this,0,0,&clip);
 	}
 	SendNotices(M_HTML_RENDERED,new BMessage(M_HTML_RENDERED));
+}
+
+void LiteHtmlView::MouseDown(BPoint where)
+{
+    // hand over mouse event to LiteHtml so we get invoked on our on_xx later
+    litehtml::position::vector redrawBoxes;
+    BPoint client = ConvertToParent(where);
+
+    bool redraw = m_doc->on_lbutton_down(where.x, where.y, client.x, client.y, redrawBoxes);
+
+    if (redraw) {
+        for (auto rect : redrawBoxes) {
+            BRect invalidateRect(rect.left(), rect.top(), rect.right(), rect.bottom());
+            BView::Invalidate(invalidateRect);
+        }
+    }
+}
+
+void LiteHtmlView::MouseUp(BPoint where)
+{
+    // hand over mouse event to LiteHtml so we get invoked on our on_xx later
+    litehtml::position::vector redrawBoxes;
+    BPoint client = ConvertToParent(where);
+
+    bool redraw = m_doc->on_lbutton_up(where.x, where.y, client.x, client.y, redrawBoxes);
+
+    if (redraw) {
+        for (auto rect : redrawBoxes) {
+            BRect invalidateRect(rect.left(), rect.top(), rect.right(), rect.bottom());
+            BView::Invalidate(invalidateRect);
+        }
+    }
+}
+
+void LiteHtmlView::MouseMoved(BPoint where, uint32 code, const BMessage *dragMessage)
+{
+    // hand over mouse event to LiteHtml so we get invoked on our on_xx later
+    litehtml::position::vector redrawBoxes;
+    BPoint client = ConvertToParent(where);
+
+    bool redraw;
+    switch(code) {
+        case B_ENTERED_VIEW: m_doc->on_mouse_over(where.x, where.y, client.x, client.y, redrawBoxes);
+        case B_EXITED_VIEW:  m_doc->on_mouse_leave(redrawBoxes);
+    }
+
+    if (redraw) {
+        for (auto rect : redrawBoxes) {
+            BRect invalidateRect(rect.left(), rect.top(), rect.right(), rect.bottom());
+            BView::Invalidate(invalidateRect);
+        }
+    }
 }
 
 void
 LiteHtmlView::GetPreferredSize(float* width,float* height)
 {
-	if (NULL == m_html)
+	if (NULL == m_doc)
 	{
 		BRect bounds(Bounds());
 		*width = bounds.Width();
 		*height = bounds.Height();
 	} else {
-		*width = m_html->width();
-		*height = m_html->height();
+		*width = m_doc->width();
+		*height = m_doc->height();
 	}
 }
 
@@ -692,19 +724,18 @@ void
 LiteHtmlView::link(const std::shared_ptr<document> &ptr, const element::ptr& el)
 {
     const char* href = el->get_attr("href", "");
-	std::cout << "link [href = '" << href << "'] NOT YET IMPLEMENTED" << std::endl;
+	std::cout << "   link [href = '" << href << "']" << std::endl;
 }
 
 void
 LiteHtmlView::set_caption(const char* caption)
 {
-	std::cout << "set_caption ['" << caption << "']: NOT YET IMPLEMENTED" << std::endl;
+	m_caption = caption;
 }
 
 void
 LiteHtmlView::get_client_rect(position& client) const
 {
-	//std::cout << "get_client_rect" << std::endl;
 	BRect bounds(Bounds());
 	BPoint leftTop = bounds.LeftTop();
 
@@ -716,19 +747,28 @@ LiteHtmlView::get_client_rect(position& client) const
 
 void LiteHtmlView::on_mouse_event(const element::ptr& el, mouse_event event)
 {
-    std::cout << "on_mouse_event: NOT YET IMPLEMENTED" << std::endl;
+    std::cout << "on_mouse_event: element = " << el->id() <<
+                 ", event = mouse_" << (event == 0 ? "enter" : "leave") << std::endl;
 }
 
 void
-LiteHtmlView::on_anchor_click(const char* base, const element::ptr& anchor)
+LiteHtmlView::on_anchor_click(const char* url, const element::ptr& anchor)
 {
-	std::cout << "on_anchor_click: NOT YET IMPLEMENTED" << std::endl;
+	std::cout << "on_anchor_click: url = " << url << ", anchor = #" << anchor->id() << std::endl;
 }
 
 void
 LiteHtmlView::set_cursor(const char* cursor)
 {
-	std::cout << "set_cursor: NOT YET IMPLEMENTED" << std::endl;
+	std::cout << "set_cursor: " << cursor << std::endl;
+    // TODO: implement lookup map between CSS properties and BCursorIDs,
+    //  see: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor and
+    //       https://www.haiku-os.org/docs/api/Cursor_8h.html#a4e11bd0710deda12dc6d363e424fda3b
+    if (strncmp(cursor, "pointer", 7) == 0) {
+        BCursor mouseCursor(B_CURSOR_ID_FOLLOW_LINK);
+    } else  {
+        BCursor mouseCursor(B_CURSOR_ID_SYSTEM_DEFAULT);
+    }
 }
 
 void
