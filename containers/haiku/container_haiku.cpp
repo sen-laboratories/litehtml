@@ -37,6 +37,8 @@ LiteHtmlView::LiteHtmlView(BRect frame, const char *name)
 	SetFont(be_plain_font);
     SetMouseEventMask(B_MOUSE_MOVED, B_FULL_POINTER_HISTORY);
     fHttpSession = new BHttpSession();
+    // to get mouse/keyboard events
+    MakeFocus();
 }
 
 LiteHtmlView::~LiteHtmlView()
@@ -90,7 +92,7 @@ LiteHtmlView::RenderHtml(const BString& htmlText, const char* masterStylesPath, 
 		std::cout << "Successfully read html" << std::endl;
 		// success
 		// post-parse render operations, if required.
-		Invalidate();
+		// done by caller Invalidate();
 	} else {
 		std::cout << "Failed to read html" << std::endl;
 	}
@@ -238,8 +240,7 @@ LiteHtmlView::Draw(BRect b)
 
 	if (NULL != m_doc) {
 		BPoint leftTop = bounds.LeftTop();
-		position clip(leftTop.x,leftTop.y,
-			bounds.Width(),bounds.Height());
+		position clip(leftTop.x,leftTop.y, bounds.Width(),bounds.Height());
 		m_doc->render(bounds.Width());
 		m_doc->draw((uint_ptr) this,0,0,&clip);
 	}
@@ -248,33 +249,61 @@ LiteHtmlView::Draw(BRect b)
 
 void LiteHtmlView::MouseDown(BPoint where)
 {
+    BPoint absoluteLoc;
+    uint32 buttons;
+    GetMouse(&absoluteLoc, &buttons);
+
+    if (! (buttons & B_PRIMARY_MOUSE_BUTTON) ) {
+        std::cout << "BView::MouseDown right/middle click, skipping." << std::endl;
+        return;
+    }
+
+    std::cout << "BView::MouseDown left button at " << where.x << "/" << where.y << std::endl;
+
     // hand over mouse event to LiteHtml so we get invoked on our on_xx later
     litehtml::position::vector redrawBoxes;
-    BPoint client = ConvertToParent(where);
+    BRect client = GetClientRect();
 
-    bool redraw = m_doc->on_lbutton_down(where.x, where.y, client.x, client.y, redrawBoxes);
+    bool redraw = m_doc->on_lbutton_down(where.x, where.y, client.left, client.top, redrawBoxes);
 
     if (redraw) {
+        std::cout << "  redraw boxes..." << std::endl;
         for (auto rect : redrawBoxes) {
             BRect invalidateRect(rect.left(), rect.top(), rect.right(), rect.bottom());
             BView::Invalidate(invalidateRect);
         }
+    } else {
+        std::cout << "  skip redraw boxes..." << std::endl;
     }
 }
 
 void LiteHtmlView::MouseUp(BPoint where)
 {
+    BPoint absoluteLoc;
+    uint32 buttons;
+    GetMouse(&absoluteLoc, &buttons);
+
+    if (! (buttons & B_PRIMARY_MOUSE_BUTTON) ) {
+        std::cout << "BView::MouseDown right/middle click, skipping." << std::endl;
+        return;
+    }
+
+    std::cout << "BView::MouseUp left at " << where.x << "/" << where.y << std::endl;
+
     // hand over mouse event to LiteHtml so we get invoked on our on_xx later
     litehtml::position::vector redrawBoxes;
-    BPoint client = ConvertToParent(where);
+    BRect client = GetClientRect();
 
-    bool redraw = m_doc->on_lbutton_up(where.x, where.y, client.x, client.y, redrawBoxes);
+    bool redraw = m_doc->on_lbutton_up(where.x, where.y, client.left, client.top, redrawBoxes);
 
     if (redraw) {
+        std::cout << "  redraw boxes..." << std::endl;
         for (auto rect : redrawBoxes) {
             BRect invalidateRect(rect.left(), rect.top(), rect.right(), rect.bottom());
             BView::Invalidate(invalidateRect);
         }
+    } else {
+        std::cout << "  skip redraw boxes..." << std::endl;
     }
 }
 
@@ -291,10 +320,13 @@ void LiteHtmlView::MouseMoved(BPoint where, uint32 code, const BMessage *dragMes
     }
 
     if (redraw) {
+        std::cout << "  redraw boxes..." << std::endl;
         for (auto rect : redrawBoxes) {
             BRect invalidateRect(rect.left(), rect.top(), rect.right(), rect.bottom());
             BView::Invalidate(invalidateRect);
         }
+    } else {
+        std::cout << "  skip redraw boxes..." << std::endl;
     }
 }
 
@@ -317,7 +349,6 @@ LiteHtmlView::create_font( const char* faceName, int size,
 	int weight, litehtml::font_style italic, unsigned int decoration,
 	font_metrics* fm )
 {
-	//std::cout << "create_font" << std::endl;
 	string_vector fonts;
 	split_string(faceName, fonts, ",");
 	trim(fonts[0]);
@@ -357,8 +388,7 @@ LiteHtmlView::create_font( const char* faceName, int size,
 
 	BFont* tempFont = new BFont();
 	bool found = false;
-	for(string_vector::iterator i = fonts.begin();
-		i != fonts.end(); i++)
+	for(string_vector::iterator i = fonts.begin(); i != fonts.end(); i++)
 	{
 		if (B_OK == tempFont->SetFamilyAndFace(i->c_str(),face))
 		{
@@ -699,6 +729,13 @@ LiteHtmlView::create_element(const char *tag_name,
 {
     // not implemented (also not in Cairo)
 	return nullptr;
+}
+
+const BRect& LiteHtmlView::GetClientRect()
+{
+    position client;
+    get_client_rect(client);
+    return *(new BRect(client.width, client.height));
 }
 
 void

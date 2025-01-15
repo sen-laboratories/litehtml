@@ -33,6 +33,7 @@ public:
 
 	virtual								~LiteHtmlView();
 
+    const BRect&                        GetClientRect();
     void				        		RenderHtml(const BString& htmlText, const char* masterStylesPath = NULL, const char* userStylesPath = NULL);
     void						        RenderUrl(const BUrl& url, const char* masterStylesPath = NULL, const char* userStylesPath = NULL);
     void                                RenderUrl(const char* fileOrHttpUrl, const char* masterStylesPath = NULL, const char* userStylesPath = NULL);
@@ -80,7 +81,7 @@ public:
 	virtual void 						import_css(litehtml::string&, const litehtml::string&, litehtml::string&) override;
 	virtual void 						get_language(litehtml::string&, litehtml::string&) const override;
 
-	//BView
+	// BView overrides
 	virtual void 						Draw(BRect updateRect) override;
 	virtual void						GetPreferredSize(float* width, float* height) override;
     virtual void                        MouseDown(BPoint where) override;
