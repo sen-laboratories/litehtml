@@ -34,6 +34,8 @@ public:
 	virtual								~LiteHtmlView();
 
     const BRect&                        GetClientRect();
+    const BSize&                        GetSize();
+
     void				        		RenderHtml(const BString& htmlText, const char* masterStylesPath = NULL, const char* userStylesPath = NULL);
     void						        RenderUrl(const BUrl& url, const char* masterStylesPath = NULL, const char* userStylesPath = NULL);
     void                                RenderUrl(const char* fileOrHttpUrl, const char* masterStylesPath = NULL, const char* userStylesPath = NULL);

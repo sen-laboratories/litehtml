@@ -10,10 +10,12 @@ void litehtml::el_anchor::on_click()
 {
 	const char* href = get_attr("href");
 
-	if(href)
-	{
+	if(href) {
+        printf("anchor clicked: %s\n", href);
 		get_document()->container()->on_anchor_click(href, shared_from_this());
-	}
+	} else {
+        printf("ignoring anchor click, empty.\n");
+    }
 }
 
 void litehtml::el_anchor::apply_stylesheet( const litehtml::css& stylesheet )

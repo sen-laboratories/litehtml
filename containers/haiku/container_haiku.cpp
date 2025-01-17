@@ -35,7 +35,7 @@ LiteHtmlView::LiteHtmlView(BRect frame, const char *name)
 {
 	SetDrawingMode(B_OP_OVER);
 	SetFont(be_plain_font);
-    SetMouseEventMask(B_MOUSE_MOVED, B_FULL_POINTER_HISTORY);
+    SetMouseEventMask(B_MOUSE_MOVED);
     fHttpSession = new BHttpSession();
     // to get mouse/keyboard events
     MakeFocus();
@@ -44,6 +44,11 @@ LiteHtmlView::LiteHtmlView(BRect frame, const char *name)
 LiteHtmlView::~LiteHtmlView()
 {
     delete fHttpSession;
+}
+
+const BSize& LiteHtmlView::GetSize()
+{
+    return *(new BSize(m_doc->width(), m_doc->height()));
 }
 
 void
@@ -95,11 +100,12 @@ LiteHtmlView::RenderHtml(const BString& htmlText, const char* masterStylesPath, 
 		// done by caller Invalidate();
 	} else {
 		std::cout << "Failed to read html" << std::endl;
+        return;
 	}
 
 	// always fire the rendering complete message
-	std::cout << "Sending html rendered message: " << M_HTML_RENDERED << std::endl;
-    SendNotices(M_HTML_RENDERED,new BMessage(M_HTML_RENDERED));
+	//std::cout << "Sending html rendered message: " << M_HTML_RENDERED << std::endl;
+    //SendNotices(M_HTML_RENDERED,new BMessage(M_HTML_RENDERED));
 }
 
 const BString&
@@ -253,12 +259,10 @@ void LiteHtmlView::MouseDown(BPoint where)
     uint32 buttons;
     GetMouse(&absoluteLoc, &buttons);
 
-    if (! (buttons & B_PRIMARY_MOUSE_BUTTON) ) {
+    if (! (buttons | B_PRIMARY_MOUSE_BUTTON) ) {
         std::cout << "BView::MouseDown right/middle click, skipping." << std::endl;
         return;
     }
-
-    std::cout << "BView::MouseDown left button at " << where.x << "/" << where.y << std::endl;
 
     // hand over mouse event to LiteHtml so we get invoked on our on_xx later
     litehtml::position::vector redrawBoxes;
@@ -272,8 +276,6 @@ void LiteHtmlView::MouseDown(BPoint where)
             BRect invalidateRect(rect.left(), rect.top(), rect.right(), rect.bottom());
             BView::Invalidate(invalidateRect);
         }
-    } else {
-        std::cout << "  skip redraw boxes..." << std::endl;
     }
 }
 
@@ -283,12 +285,10 @@ void LiteHtmlView::MouseUp(BPoint where)
     uint32 buttons;
     GetMouse(&absoluteLoc, &buttons);
 
-    if (! (buttons & B_PRIMARY_MOUSE_BUTTON) ) {
-        std::cout << "BView::MouseDown right/middle click, skipping." << std::endl;
+    if (! (buttons | B_PRIMARY_MOUSE_BUTTON) ) {
+        std::cout << "BView::MouseUp right/middle click, skipping." << std::endl;
         return;
     }
-
-    std::cout << "BView::MouseUp left at " << where.x << "/" << where.y << std::endl;
 
     // hand over mouse event to LiteHtml so we get invoked on our on_xx later
     litehtml::position::vector redrawBoxes;
@@ -302,21 +302,27 @@ void LiteHtmlView::MouseUp(BPoint where)
             BRect invalidateRect(rect.left(), rect.top(), rect.right(), rect.bottom());
             BView::Invalidate(invalidateRect);
         }
-    } else {
-        std::cout << "  skip redraw boxes..." << std::endl;
     }
 }
 
+// hand over mouse event to LiteHtml so we get invoked on our on_xx later
 void LiteHtmlView::MouseMoved(BPoint where, uint32 code, const BMessage *dragMessage)
 {
-    // hand over mouse event to LiteHtml so we get invoked on our on_xx later
-    litehtml::position::vector redrawBoxes;
     BPoint client = ConvertToParent(where);
-
+    litehtml::position::vector redrawBoxes;
     bool redraw;
+
     switch(code) {
-        case B_ENTERED_VIEW: m_doc->on_mouse_over(where.x, where.y, client.x, client.y, redrawBoxes);
-        case B_EXITED_VIEW:  m_doc->on_mouse_leave(redrawBoxes);
+        case B_ENTERED_VIEW:
+        case B_INSIDE_VIEW:
+            redraw = m_doc->on_mouse_over(where.x, where.y, client.x, client.y, redrawBoxes);
+            break;
+        case B_EXITED_VIEW:
+        case B_OUTSIDE_VIEW:
+            redraw = m_doc->on_mouse_leave(redrawBoxes);
+            break;
+        default:
+            std::cout << "unsupported/unknown code " << code << ", skipping." << std::endl;
     }
 
     if (redraw) {
@@ -325,8 +331,6 @@ void LiteHtmlView::MouseMoved(BPoint where, uint32 code, const BMessage *dragMes
             BRect invalidateRect(rect.left(), rect.top(), rect.right(), rect.bottom());
             BView::Invalidate(invalidateRect);
         }
-    } else {
-        std::cout << "  skip redraw boxes..." << std::endl;
     }
 }
 
@@ -521,8 +525,8 @@ LiteHtmlView::load_image( const char* src,
 	if (m_images.find(urlKey) == m_images.end())
 	{
         std::cout << "   image not yet in cache, fetching..." << std::endl;
-        const char* htmlContent = FetchHttpContent(absoluteUrl);
-        if (htmlContent == NULL || strlen(htmlContent) == 0)
+        const char* imageData = FetchHttpContent(absoluteUrl);
+        if (imageData == NULL || strlen(imageData) == 0)
         {
             std::cout << "    no valid image data received, aborting." << std::endl;
             return;
@@ -530,8 +534,12 @@ LiteHtmlView::load_image( const char* src,
         else
         {
 			std::cout << "    loaded image from data from " << absoluteUrl << std::endl;
-			BBitmap* img = BTranslationUtils::GetBitmap(htmlContent);
-			m_images[urlKey] = img;
+			BBitmap* img = BTranslationUtils::GetBitmap(imageData);
+            m_images[urlKey] = img;
+            // we always save above to avoid cache miss and another attempt to download the image
+            if (img == NULL) {
+                std::cout << "      could not handle image " << absoluteUrl << std::endl;
+            }
 		}
 	} else {
         std::cout << "   found image, done." << std::endl;
@@ -545,8 +553,29 @@ LiteHtmlView::make_url(const char* relativeUrl, const char* baseUrl, BUrl& outUr
         baseUrl = m_base_url.c_str();
     }
     if (relativeUrl == NULL) relativeUrl = "";
-    std::cout << "make_url: base url = " << baseUrl << ", relative path = " << relativeUrl << std::endl;
+    std::cout << "make_url: base url = " << baseUrl;
 
+    // WIP: handle data: URLs, e.g. data:image/svg+xml,... (URL escaped data like %3Csvg for <sgv)
+    // see https://gist.github.com/jennyknuth/222825e315d45a738ed9d6e04c7a88d0
+    BString relativeOrDataUrl(relativeUrl);
+    BString dataPrefix("data:");
+
+    if (relativeOrDataUrl.StartsWith(dataPrefix)) {
+        int32 dataPrefixLen = dataPrefix.Length();
+        int32 separatorOffset = relativeOrDataUrl.FindFirst(',', dataPrefixLen);
+        if (separatorOffset < 0) {
+            std::cout << "   data URL with illegal/unsupported format separator: "
+                      << relativeOrDataUrl.TruncateChars(32) << std::endl;
+        }
+        BString dataFormat;
+        relativeOrDataUrl.CopyCharsInto(dataFormat, dataPrefixLen, separatorOffset - dataPrefixLen);
+        std::cout << ", data URL detected, format = " << dataFormat << std::endl;
+        // TODO: what to do? caller must handle (probably already before calling this function)
+        outUrl = BUrl(baseUrl);
+        return;
+    } else {
+        std::cout << ", relative path = " << relativeUrl << std::endl;
+    }
     // strip current dir ./ from relative url since we always use an absolute url in the end
     BString path(relativeUrl);
     if (path.StartsWith("./")) {
@@ -576,27 +605,29 @@ LiteHtmlView::set_base_url(const char* base_url)
     }
 }
 
-
 void
-LiteHtmlView::get_image_size( const char* src, const char* baseurl, size& sz)
+LiteHtmlView::get_image_size(const char* src, const char* baseUrl, size& sz)
 {
-	std::cout << "get_image_size for image " << baseurl << std::endl;
 	BUrl url;
-	make_url(src, baseurl, url);
+	make_url(src, baseUrl, url);
 
-	const auto& miter(m_images.find(url.UrlString().HashValue()));
-	if (m_images.end() != miter)
-	{
-		BBitmap* img = (BBitmap*)miter->second;
+    uint32 imgKey = url.UrlString().HashValue();
+
+    auto imgIter = m_images.find(imgKey);
+    if (imgIter != m_images.end() && imgIter->second != NULL) {
+        BBitmap* img = (BBitmap*)imgIter->second;
         if (img) {
+            std::cout << "get_image_size for image " << url << ": ";
             BRect size = img->Bounds();
             sz.width = size.Width();
             sz.height = size.Height();
-            std::cout << "    width: " << +sz.width << ", height: " << +sz.height << std::endl;
+            std::cout << "  width = " << sz.width << ", height = " << sz.height << std::endl;
         } else {
-            std::cout << "    could not get image!" << std::endl;
+            std::cout << "    could not get image size for image src " << url << std::endl;
+            sz.width = 0;
+            sz.height = 0;
         }
-	}
+    }
 }
 
 void
@@ -750,11 +781,10 @@ LiteHtmlView::get_media_features(media_features& media) const
 	BRect bounds(Bounds());
 	media.device_width	= bounds.Width();
 	media.device_height	= bounds.Height();
-    //FIXME
-	media.color			= 8;
-	media.monochrome	= 0;
-	media.color_index	= 256;
-	media.resolution	= 96;
+	media.color       = 8; // same as Chrome/Firefox
+	media.monochrome  = 0; // same as Chrome/Firefox
+	media.color_index = 0; // same as Chrome/Firefox - was 256 for Haiku
+	media.resolution  = 96; // same as Chrome/Firefox
 }
 
 void
@@ -784,14 +814,18 @@ LiteHtmlView::get_client_rect(position& client) const
 
 void LiteHtmlView::on_mouse_event(const element::ptr& el, mouse_event event)
 {
-    std::cout << "on_mouse_event: element = " << el->id() <<
+    std::cout << "on_mouse_event: element = " << el->get_tagName() <<
                  ", event = mouse_" << (event == 0 ? "enter" : "leave") << std::endl;
 }
 
 void
 LiteHtmlView::on_anchor_click(const char* url, const element::ptr& anchor)
 {
-	std::cout << "on_anchor_click: url = " << url << ", anchor = #" << anchor->id() << std::endl;
+    BUrl href;
+    make_url(url, NULL, href);
+
+	std::cout << "on_anchor_click: url = " << href.UrlString()<< std::endl;
+    // TODO: open URL in preferred browser/app
 }
 
 void
@@ -802,8 +836,10 @@ LiteHtmlView::set_cursor(const char* cursor)
     //  see: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor and
     //       https://www.haiku-os.org/docs/api/Cursor_8h.html#a4e11bd0710deda12dc6d363e424fda3b
     if (strncmp(cursor, "pointer", 7) == 0) {
+        std::cout << "  -> link cursor." << std::endl;
         BCursor mouseCursor(B_CURSOR_ID_FOLLOW_LINK);
     } else  {
+        std::cout << "  -> default cursor." << std::endl;
         BCursor mouseCursor(B_CURSOR_ID_SYSTEM_DEFAULT);
     }
 }

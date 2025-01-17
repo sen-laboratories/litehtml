@@ -1,7 +1,9 @@
 #ifndef LH_DOCUMENT_H
 #define LH_DOCUMENT_H
 
+#include "element.h"
 #include "style.h"
+#include "stylesheet.h"
 #include "types.h"
 #include "master_css.h"
 #include "encodings.h"
@@ -16,7 +18,7 @@ namespace litehtml
 		string	text;
 		string	baseurl;
 		string	media;
-		
+
 		css_text() = default;
 
 		css_text(const char* txt, const char* url, const char* media_str)
@@ -109,7 +111,7 @@ namespace litehtml
 			document_container*  container,
 			const string&        master_styles = litehtml::master_css,
 			const string&        user_styles = "");
-	
+
 	private:
 		uint_ptr	add_font(const char* name, int size, const char* weight, const char* style, const char* decoration, font_metrics* fm);
 

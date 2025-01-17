@@ -1,6 +1,7 @@
 #ifndef LH_ELEMENT_H
 #define LH_ELEMENT_H
 
+#include <functional>
 #include <memory>
 #include <tuple>
 #include <list>

@@ -1,6 +1,9 @@
-#include "html.h"
+#include <iostream>
+
 #include "document.h"
+#include "document_container.h"
 #include "stylesheet.h"
+#include "html.h"
 #include "html_tag.h"
 #include "el_text.h"
 #include "el_para.h"
@@ -47,10 +50,10 @@ document::~document()
 }
 
 document::ptr document::createFromString(
-	const estring& str, 
-	document_container* container, 
-	const string& master_styles, 
-	const string& user_styles )
+	const estring& str,
+	document_container* container,
+	const std::string& master_styles,
+	const std::string& user_styles )
 {
 	// Create litehtml::document
 	document::ptr doc = make_shared<document>(container);
@@ -132,7 +135,7 @@ document::ptr document::createFromString(
 		doc->m_root_render = doc->m_root->create_render_item(nullptr);
 
 		// Now the m_tabular_elements is filled with tabular elements.
-		// We have to check the tabular elements for missing table elements 
+		// We have to check the tabular elements for missing table elements
 		// and create the anonymous boxes in visual table layout
 		doc->fix_tables_layout();
 
@@ -216,7 +219,7 @@ GumboOutput* document::parse_html(estring str)
 {
 	// https://html.spec.whatwg.org/multipage/parsing.html#the-input-byte-stream
 	encoding_sniffing_algorithm(str);
-	// cannot store output in local variable because gumbo keeps pointers into it, 
+	// cannot store output in local variable because gumbo keeps pointers into it,
 	// which will be accessed later in gumbo_tag_from_original_text
 	if (str.encoding == encoding::utf_8)
 		m_text = str;
@@ -712,6 +715,9 @@ void document::add_stylesheet( const char* str, const char* baseurl, const char*
 
 bool document::on_mouse_over( int x, int y, int client_x, int client_y, position::vector& redraw_boxes )
 {
+    std::cout << "document::on_mouse_over: x=" << x << ", y=" << y
+              << ", client_x=" << client_x << ", client_y=" << client_y << std::endl;
+
 	if(!m_root || !m_root_render)
 	{
 		return false;
@@ -744,9 +750,9 @@ bool document::on_mouse_over( int x, int y, int client_x, int client_y, position
 		}
 		cursor = m_over_element->css().get_cursor();
 	}
-	
+
 	m_container->set_cursor(cursor.c_str());
-	
+
 	if(state_was_changed)
 	{
 		m_container->on_mouse_event(m_over_element, mouse_event_enter);
@@ -757,6 +763,8 @@ bool document::on_mouse_over( int x, int y, int client_x, int client_y, position
 
 bool document::on_mouse_leave( position::vector& redraw_boxes )
 {
+    std::cout << "document::on_mouse_leave" << std::endl;
+
 	if(!m_root || !m_root_render)
 	{
 		return false;
@@ -774,12 +782,17 @@ bool document::on_mouse_leave( position::vector& redraw_boxes )
 
 bool document::on_lbutton_down( int x, int y, int client_x, int client_y, position::vector& redraw_boxes )
 {
+    std::cout << "document::on_lbutton_down: x=" << x << ", y=" << y
+              << ", client_x=" << client_x << ", client_y=" << client_y << std::endl;
+
 	if(!m_root || !m_root_render)
 	{
+        printf("document::on_lbutton_down: nothing rendered yet, aborting.\n");
 		return false;
 	}
 
 	element::ptr over_el = m_root_render->get_element_by_point(x, y, client_x, client_y);
+    std::cout << "document::on_lbutton_down: clicked element " << over_el->id() << std::endl;
 
 	bool state_was_changed = false;
 
@@ -827,6 +840,8 @@ bool document::on_lbutton_down( int x, int y, int client_x, int client_y, positi
 
 bool document::on_lbutton_up( int /*x*/, int /*y*/, int /*client_x*/, int /*client_y*/, position::vector& redraw_boxes )
 {
+    std::cout << "document::on_lbutton_up" << std::endl;
+
 	if(!m_root || !m_root_render)
 	{
 		return false;
@@ -1136,7 +1151,7 @@ void document::append_children_from_string(element& parent, const char* str)
 		child->compute_styles();
 
 		// Now the m_tabular_elements is filled with tabular elements.
-		// We have to check the tabular elements for missing table elements 
+		// We have to check the tabular elements for missing table elements
 		// and create the anonymous boxes in visual table layout
 		fix_tables_layout();
 
