@@ -46,11 +46,6 @@ LiteHtmlView::~LiteHtmlView()
     delete fHttpSession;
 }
 
-const BSize& LiteHtmlView::GetSize()
-{
-    return *(new BSize(m_doc->width(), m_doc->height()));
-}
-
 void
 LiteHtmlView::RenderUrl(const char* fileOrHttpUrl, const char* masterStylesPath, const char* userStylesPath)
 {
@@ -240,16 +235,19 @@ LiteHtmlView::Draw(BRect b)
 	std::cout << "DRAW CALLED" << std::endl;
 
 	BRect bounds(Bounds());
-	FillRect(bounds,B_SOLID_LOW);
+	FillRect(bounds, B_SOLID_LOW);
 
-	// b only part of the window, but we need to draw the whole lot
+	// b is only part of the window, but we need to draw the whole lot
+    // TODO: still see how we can optimize this, clipping is wrong, view too large
 
 	if (NULL != m_doc) {
 		BPoint leftTop = bounds.LeftTop();
-		position clip(leftTop.x,leftTop.y, bounds.Width(),bounds.Height());
+		position clip(leftTop.x, leftTop.y, bounds.Width(), bounds.Height());
 		m_doc->render(bounds.Width());
-		m_doc->draw((uint_ptr) this,0,0,&clip);
+		m_doc->draw((uint_ptr) this, 0, 0, &clip);
 	}
+
+    std::cout << "DRAW FINISHED, sending HTML RENDERED notice." << std::endl;
 	SendNotices(M_HTML_RENDERED,new BMessage(M_HTML_RENDERED));
 }
 
@@ -766,7 +764,7 @@ const BRect& LiteHtmlView::GetClientRect()
 {
     position client;
     get_client_rect(client);
-    return *(new BRect(client.width, client.height));
+    return *(new BRect(client.x, client.y, client.x + client.width, client.y + client.height));
 }
 
 void
@@ -791,7 +789,7 @@ void
 LiteHtmlView::link(const std::shared_ptr<document> &ptr, const element::ptr& el)
 {
     const char* href = el->get_attr("href", "");
-	std::cout << "   link [href = '" << href << "']" << std::endl;
+	std::cout << "adding link [href = '" << href << "']" << std::endl;
 }
 
 void
@@ -806,16 +804,15 @@ LiteHtmlView::get_client_rect(position& client) const
 	BRect bounds(Bounds());
 	BPoint leftTop = bounds.LeftTop();
 
-	client.width = bounds.Width();
-	client.height = bounds.Height();
+	client.width = bounds.IntegerWidth();
+	client.height = bounds.IntegerHeight();
 	client.x = leftTop.x;
 	client.y = leftTop.y;
 }
 
 void LiteHtmlView::on_mouse_event(const element::ptr& el, mouse_event event)
 {
-    std::cout << "on_mouse_event: element = " << el->get_tagName() <<
-                 ", event = mouse_" << (event == 0 ? "enter" : "leave") << std::endl;
+    std::cout << "on_mouse_event: event = mouse_" << (event == 0 ? "enter" : "leave") << std::endl;
 }
 
 void
@@ -825,7 +822,30 @@ LiteHtmlView::on_anchor_click(const char* url, const element::ptr& anchor)
     make_url(url, NULL, href);
 
 	std::cout << "on_anchor_click: url = " << href.UrlString()<< std::endl;
-    // TODO: open URL in preferred browser/app
+    BPoint location;
+    uint32 buttons;
+    GetMouse(&location, &buttons);
+
+    BMessage msg(M_ANCHOR_CLICKED);
+    msg.AddUInt32("buttons", buttons);
+    msg.AddPoint("where", location);
+    msg.AddString("href", href.UrlString());
+    // get anchor
+    if (href.HasFragment()) {
+        msg.AddString("fragment", href.Fragment());
+        // get position of anchor target
+        // see https://github.com/litehtml/litehtml/wiki/How-to-use-litehtml#processing-named-anchors
+        BString elName("#");
+        elName += href.Fragment();
+        element::ptr el = m_doc->root()->select_one(elName.String());
+        if (el) {
+            litehtml::position pos = el->get_placement();
+            msg.AddPoint("fragmentPos", BPoint(0, pos.y));
+        }
+    }
+    msg.PrintToStream();
+
+    SendNotices(M_ANCHOR_CLICKED, new BMessage(msg));
 }
 
 void

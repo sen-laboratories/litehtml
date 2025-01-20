@@ -21,7 +21,13 @@
 class BBitmap;
 
 enum {
-	M_HTML_RENDERED = 'hrnd'
+	M_HTML_RENDERED = 'hrnd',
+    // field 'buttons' contains mouse buttons on click (for context menu support)
+    // field 'where' contains the location of the mouse click
+    // field 'href' contains the absolute target URI
+    // field 'targetId' contains the target anchor ID if applicable
+    // field 'targetPos' contains the target anchor's position if applicable
+    M_ANCHOR_CLICKED  = 'hanc'
 };
 
 class LiteHtmlView : public BView, public litehtml::document_container
@@ -34,7 +40,6 @@ public:
 	virtual								~LiteHtmlView();
 
     const BRect&                        GetClientRect();
-    const BSize&                        GetSize();
 
     void				        		RenderHtml(const BString& htmlText, const char* masterStylesPath = NULL, const char* userStylesPath = NULL);
     void						        RenderUrl(const BUrl& url, const char* masterStylesPath = NULL, const char* userStylesPath = NULL);
