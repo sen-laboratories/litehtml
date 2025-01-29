@@ -17,14 +17,25 @@
 #include <Entry.h>
 #include <File.h>
 #include <Path.h>
+#include <SupportKit.h>
 #include <TranslationUtils.h>
 
+#include <private/netservices2/ExclusiveBorrow.h>
+#include <private/netservices2/HttpFields.h>
 #include <private/netservices2/HttpRequest.h>
 #include <private/netservices2/HttpResult.h>
 #include <private/netservices2/NetServicesDefs.h>
 
 using namespace litehtml;
-using namespace BPrivate::Network;
+using BPrivate::Network::BBorrow;
+using BPrivate::Network::BExclusiveBorrow;
+using BPrivate::Network::BHttpFields;
+using BPrivate::Network::BHttpMethod;
+using BPrivate::Network::BHttpRequest;
+using BPrivate::Network::BHttpResult;
+using BPrivate::Network::BHttpSession;
+using BPrivate::Network::BNetworkRequestError;
+using BPrivate::Network::make_exclusive_borrow;
 
 LiteHtmlView::LiteHtmlView(BRect frame, const char *name)
 	: BView(frame, name, B_FOLLOW_ALL, B_WILL_DRAW),
@@ -68,164 +79,161 @@ LiteHtmlView::RenderUrl(const BUrl& url, const char* masterStylesPath, const cha
 {
 	std::cout << "RenderUrl from URL " << url << std::endl;
 
-    const char* html = FetchHttpContent(url);
-    if (html != NULL)
-    {
-        RenderHtml(html, masterStylesPath, userStylesPath);
+    if (url.HasHost()) {
+        set_base_url(url);
+    } else {
+        if (! url.Protocol().StartsWith("http")) {
+            std::cout << "  got no absolute URL for remote URL " << url << " - result will be incomplete." << std::endl;
+        }
     }
-    else
-    {
+
+    const string html = FetchUrlContent(url);
+    if (html.length() > 0) {
+        RenderHtml(html.c_str(), masterStylesPath, userStylesPath);
+    }
+    else {
         std::cout << "RenderUrl aborted, no content received." << std::endl;
     }
 }
 
 void
-LiteHtmlView::RenderHtml(const BString& htmlText, const char* masterStylesPath, const char* userStylesPath)
+LiteHtmlView::RenderHtml(const char* htmlText, const char* masterStylesPath, const char* userStylesPath)
 {
-	std::cout << "RenderHTML" << std::endl;
+	std::cout << "RenderHTML..." << std::endl;
 
 	// todo: load optionally supplied styles from paths and pass string content ref here
-	m_doc = document::createFromString(htmlText.String(), this/*, string(masterStylesPath), string(userStylesPath)*/);
+	m_doc = document::createFromString(htmlText, this/*, string(masterStylesPath), string(userStylesPath)*/);
 
 	if (m_doc)
 	{
-		std::cout << "Successfully read html" << std::endl;
+		std::cout << "Successfully processed html." << std::endl;
 		// success
 		// post-parse render operations, if required.
 		// done by caller Invalidate();
 	} else {
-		std::cout << "Failed to read html" << std::endl;
+		std::cout << "Failed to process html!" << std::endl;
         return;
 	}
-
-	// always fire the rendering complete message
-	//std::cout << "Sending html rendered message: " << M_HTML_RENDERED << std::endl;
-    //SendNotices(M_HTML_RENDERED,new BMessage(M_HTML_RENDERED));
 }
 
-const BString&
-LiteHtmlView::FetchHttpContent(const BUrl& fileOrHttpUrl)
+const std::string
+LiteHtmlView::FetchUrlContent(const BUrl& fileOrHttpUrl)
 {
     std::cout << "FetchHttpContent from URL " << fileOrHttpUrl << std::endl;
 
     bool isFile;
-
-	if (!fileOrHttpUrl.IsValid())
-	{
+	if (!fileOrHttpUrl.IsValid()) {
         std::cout << "  Invalid URL: " << fileOrHttpUrl << std::endl;
-        return *(new BString(""));
+        return std::string();
 	} else {
 		// Fetch content according to protocol
 		BString protocol = fileOrHttpUrl.Protocol();
 		// Note: file:// is also supported, but seems heavy weight to use
-        if (protocol == "file")
-        {
+        if (protocol == "file") {
             isFile = true;
 		}
-        else if (protocol.StartsWith("http"))
-        {
+        else if (protocol.StartsWith("http")) {
             isFile = false;
         }
-        else
-        {
+        else {
             std::cout << "Unknown protocol '" << protocol
 			          << "' for URL: '" << fileOrHttpUrl << "'" << std::endl;
-            return *(new BString(""));
+            return std::string();
         }
     }
-    if (isFile)
-    {
-        return FetchLocalContentFromFile(fileOrHttpUrl);
+    if (isFile) {
+        return FetchLocalContent(fileOrHttpUrl);
     } else {
-        return FetchRemoteContentFromUrl(fileOrHttpUrl);
+        return FetchRemoteContent(fileOrHttpUrl);
 	}
 }
 
-const BString&
-LiteHtmlView::FetchLocalContentFromFile(const BUrl& fileOrHttpUrl)
+const std::string
+LiteHtmlView::FetchLocalContent(const BUrl& fileUrl)
 {
-    std::cout << "  Loading file from URL " << fileOrHttpUrl << std::endl;
+    std::cout << "  fetching LOCAL resource from URL " << fileUrl << std::endl;
     // Get parent folder for the base url
     BString pathFromUrl;
-    pathFromUrl = BUrl::UrlDecode(BString(fileOrHttpUrl.Path()));
+    pathFromUrl = BUrl::UrlDecode(BString(fileUrl.Path()));
 
     BPath htmlPath(pathFromUrl);
     std::cout << "htmlPath is " << htmlPath.Path() << std::endl;
 
     BPath parentDir;
     htmlPath.GetParent(&parentDir);
-    BString baseUrl(fileOrHttpUrl.Protocol());
+    BString baseUrl(fileUrl.Protocol());
     baseUrl << "://" << parentDir.Path() << "/";
     set_base_url(baseUrl);
 
     BFile htmlFile(htmlPath.Path(), B_READ_ONLY);
     status_t result = htmlFile.InitCheck();
-    if (result != B_OK)
-    {
+    if (result != B_OK) {
         std::cout << "error opening file '" << htmlPath.Path() << "':"
                   << strerror(result) << std::endl;
-        return *(new BString(""));
+        return std::string();
     }
 
     off_t size;
     htmlFile.GetSize(&size);
     if (size <= 0) {
-        std::cout << "error: empty/invalid file '" << fileOrHttpUrl << "':"
+        std::cout << "error: empty/invalid file '" << fileUrl << "':"
           << strerror(result) << std::endl;
-        return *(new BString(""));
+        return std::string();
     }
     else
     {
         char buffer[size+1];
-        size_t bytesRead = htmlFile.Read(buffer, size);
+        ssize_t bytesRead = htmlFile.Read(buffer, size);
         if (bytesRead < 0) {
-            std::cout << "error reading from file '" << fileOrHttpUrl << "':"
+            std::cout << "error reading from file '" << fileUrl << "':"
               << strerror(result) << std::endl;
             return NULL;
         }
         buffer[size] = '\0';
         htmlFile.Unset();
 
-        return *(new BString(buffer));
+        return std::string(buffer);
     }
 }
 
-const BString&
-LiteHtmlView::FetchRemoteContentFromUrl(const BUrl& fileOrHttpUrl)
+const std::string
+LiteHtmlView::FetchRemoteContent(const BUrl& httpUrl)
 {
-    std::cout << "  fetching from URL " << fileOrHttpUrl.UrlString() << std::endl;
-    BString baseUrl(fileOrHttpUrl.Protocol());
-    baseUrl << "://" << fileOrHttpUrl.Host() << "/";
-    set_base_url(baseUrl);
+    std::cout << "  fetching REMOTE resource from URL " << httpUrl.UrlString() << "..." << std::endl;
 
     try {
-        BHttpRequest&& request = BHttpRequest(fileOrHttpUrl);
-        BHttpResult result = fHttpSession->Execute(std::move(request));
-        if (result.Status().code >= 200 && result.Status().code <= 400)
-        {
-            std::cout << "  Request successful, got "
-                      << (! result.Body().text.has_value() ? "empty " : "") << "response "
-                      << (  result.Body().text.has_value() ? "with body" : "")
-                      << " and status " << result.Status().code << ": " << result.Status().text
-                      << std::endl;
+        auto request = BHttpRequest(httpUrl);
+        auto body = make_exclusive_borrow<BMallocIO>();
+        auto result = fHttpSession->Execute(std::move(request), BBorrow<BDataIO>(body));
 
-            BString *htmlBody = new BString(result.Body().text.value_or(""));
-            return (*htmlBody);
+        // the Status() call will block until full response has been received
+        if (result.Status().code >= 200 && result.Status().code <= 400) {
+            result.Body();  // we need to block here to make sure the Borrow buffer is released!
+            auto bodyString = new std::string(reinterpret_cast<const char*>(body->Buffer()), body->BufferLength());
+            bool hasBody = ! bodyString->empty();
+
+            std::cout << "  SUCCESS, got " << (! hasBody ? "EMPTY " : "") << "response ";
+            if (hasBody) {
+                std::cout << "with BODY (" << bodyString->length() << " bytes)";
+            }
+            std::cout << " and status " << result.Status().code << ": " << result.Status().text << std::endl;
+
+            return *(bodyString);
         }
         else
         {
-            std::cout << "HTTP error " << result.Status().code
-                      << " reading from URL '" << fileOrHttpUrl << "':"
+            std::cout << "  HTTP error " << result.Status().code
+                      << " reading from URL " << httpUrl << " - "
                       << result.Status().text << std::endl;
-            return *(new BString(""));
+            return std::string();
         }
     } catch (const BPrivate::Network::BNetworkRequestError& err) {
-        std::cout << "network error " << err.ErrorCode()
-          << " reading from URL '" << fileOrHttpUrl << "':"
+        std::cout << "  network ERROR " << err.ErrorCode()
+          << " reading from URL " << httpUrl << " - "
           << err.Message() << ", detail: "
           << err.DebugMessage() << std::endl;
 
-        return *(new BString(""));
+        return std::string();
     }
 }
 
@@ -243,8 +251,8 @@ LiteHtmlView::Draw(BRect b)
 	if (NULL != m_doc) {
 		BPoint leftTop = bounds.LeftTop();
 		position clip(leftTop.x, leftTop.y, bounds.Width(), bounds.Height());
-		m_doc->render(bounds.Width());
-		m_doc->draw((uint_ptr) this, 0, 0, &clip);
+		m_doc.get()->render(bounds.Width());
+		m_doc.get()->draw((uint_ptr) this, 0, 0, &clip);
 	}
 
     std::cout << "DRAW FINISHED, sending HTML RENDERED notice." << std::endl;
@@ -266,7 +274,7 @@ void LiteHtmlView::MouseDown(BPoint where)
     litehtml::position::vector redrawBoxes;
     BRect client = GetClientRect();
 
-    bool redraw = m_doc->on_lbutton_down(where.x, where.y, client.left, client.top, redrawBoxes);
+    bool redraw = m_doc.get()->on_lbutton_down(where.x, where.y, client.left, client.top, redrawBoxes);
 
     if (redraw) {
         std::cout << "  redraw boxes..." << std::endl;
@@ -292,7 +300,7 @@ void LiteHtmlView::MouseUp(BPoint where)
     litehtml::position::vector redrawBoxes;
     BRect client = GetClientRect();
 
-    bool redraw = m_doc->on_lbutton_up(where.x, where.y, client.left, client.top, redrawBoxes);
+    bool redraw = m_doc.get()->on_lbutton_up(where.x, where.y, client.left, client.top, redrawBoxes);
 
     if (redraw) {
         std::cout << "  redraw boxes..." << std::endl;
@@ -313,7 +321,7 @@ void LiteHtmlView::MouseMoved(BPoint where, uint32 code, const BMessage *dragMes
     switch(code) {
         case B_ENTERED_VIEW:
         case B_INSIDE_VIEW:
-            redraw = m_doc->on_mouse_over(where.x, where.y, client.x, client.y, redrawBoxes);
+            redraw = m_doc.get()->on_mouse_over(where.x, where.y, client.x, client.y, redrawBoxes);
             break;
         case B_EXITED_VIEW:
         case B_OUTSIDE_VIEW:
@@ -508,8 +516,7 @@ LiteHtmlView::draw_list_marker( uint_ptr hdc,
 }
 
 void
-LiteHtmlView::load_image( const char* src,
-	const char* baseUrl, bool redraw_on_ready )
+LiteHtmlView::load_image(const char* src, const char* baseUrl, bool redraw_on_ready )
 {
 	std::cout << "load_image" << std::endl;
 
@@ -520,23 +527,49 @@ LiteHtmlView::load_image( const char* src,
     uint32 urlKey = absoluteUrl.UrlString().HashValue();
     std::cout << "   checking image cache with key " << urlKey << std::endl;
 
-	if (m_images.find(urlKey) == m_images.end())
-	{
+	if (m_images.find(urlKey) == m_images.end()) {
         std::cout << "   image not yet in cache, fetching..." << std::endl;
-        const char* imageData = FetchHttpContent(absoluteUrl);
-        if (imageData == NULL || strlen(imageData) == 0)
-        {
-            std::cout << "    no valid image data received, aborting." << std::endl;
+        const string imageData = FetchUrlContent(absoluteUrl);
+        if (imageData.length() == 0) {
+            std::cout << "    no valid image data received, skipping." << std::endl;
             return;
         }
-        else
-        {
-			std::cout << "    loaded image from data from " << absoluteUrl << std::endl;
-			BBitmap* img = BTranslationUtils::GetBitmap(imageData);
+        else {
+			std::cout << "    FETCHED image data (" << imageData.length() << " bytes) from " << absoluteUrl
+                      << ", translating..." << std::endl;
+            /*TEST */
+            BString path("/tmp/litehtml/");
+            BString name(absoluteUrl.Path());
+            if (int32 index = name.FindLast('/') > 0) {
+                name.Remove(0, index);   // including / char
+            }
+            path.Append(name.String());
+
+            std::cout << "    writing image to " << path.String() << std::endl;
+            BFile imgFile(path.String(), B_READ_WRITE | B_CREATE_FILE);
+            status_t result = imgFile.WriteExactly(imageData.c_str(), imageData.length());
+
+            if (result != B_OK) {
+                std::cout << "    error writing image " << path.String() << ": " << strerror(result) << std::endl;
+            } else {
+                imgFile.Flush();
+                std::cout << "    SUCCESSfully wrote image " << path.String() << std::endl;
+            }
+            // TEST END */
+            BMemoryIO memBuffer(imageData.c_str(), imageData.length());
+			BBitmap* img = BTranslationUtils::GetBitmap(&memBuffer);
             m_images[urlKey] = img;
-            // we always save above to avoid cache miss and another attempt to download the image
+            // we always save above to avoid subsequent cache misses and attempts to redownload the image
             if (img == NULL) {
                 std::cout << "      could not handle image " << absoluteUrl << std::endl;
+            } else {
+                if (!img->IsValid()) {
+                    std::cout << "      WARN: invalid Bitmap!";
+                } else {
+                    BRect imgBounds = img->Bounds();
+                    std::cout << "      GOT bitmap of size " << imgBounds.Height() << "x" << imgBounds.Height() << std::endl;
+                }
+                std::cout << "      successfully stored image " << absoluteUrl << " with key " << urlKey << std::endl;
             }
 		}
 	} else {
@@ -553,7 +586,7 @@ LiteHtmlView::make_url(const char* relativeUrl, const char* baseUrl, BUrl& outUr
     if (relativeUrl == NULL) relativeUrl = "";
     std::cout << "make_url: base url = " << baseUrl;
 
-    // WIP: handle data: URLs, e.g. data:image/svg+xml,... (URL escaped data like %3Csvg for <sgv)
+    // TODO: handle data: URLs, e.g. data:image/svg+xml,... (URL escaped data like %3Csvg for <sgv)
     // see https://gist.github.com/jennyknuth/222825e315d45a738ed9d6e04c7a88d0
     BString relativeOrDataUrl(relativeUrl);
     BString dataPrefix("data:");
@@ -562,7 +595,7 @@ LiteHtmlView::make_url(const char* relativeUrl, const char* baseUrl, BUrl& outUr
         int32 dataPrefixLen = dataPrefix.Length();
         int32 separatorOffset = relativeOrDataUrl.FindFirst(',', dataPrefixLen);
         if (separatorOffset < 0) {
-            std::cout << "   data URL with illegal/unsupported format separator: "
+            std::cout << ", data URL with illegal/unsupported format separator: "
                       << relativeOrDataUrl.TruncateChars(32) << std::endl;
         }
         BString dataFormat;
@@ -574,21 +607,20 @@ LiteHtmlView::make_url(const char* relativeUrl, const char* baseUrl, BUrl& outUr
     } else {
         std::cout << ", relative path = " << relativeUrl << std::endl;
     }
-    // strip current dir ./ from relative url since we always use an absolute url in the end
-    BString path(relativeUrl);
-    if (path.StartsWith("./")) {
-        path = path.RemoveFirst("./");
+    // check for absolute URL in path
+    if (BUrl(relativeUrl).HasHost()) {
+        outUrl = relativeUrl;
     } else {
-        // check for absolute URL in path
-        BUrl url(relativeUrl);
-        if (url.IsValid()) {
-            outUrl = url;
+        /*BString path(relativeUrl);
+        if (path.StartsWith(".")) {
+            path.RemoveFirst("./");
+        }*/
+        BString urlStr(baseUrl);
+        BString pathStr(relativeUrl);
+        if (pathStr.StartsWith("/")) {
+            pathStr.RemoveChars(0, 1);
         }
-    }
-    if (! outUrl.IsValid()) {
-        BString url(baseUrl);
-        url.Append(path);
-        outUrl = url.String();
+        outUrl = urlStr.Append(pathStr).String();
     }
 	std::cout << "output url is " << (outUrl.IsValid() ? "valid" : "invalid!")
               << ", outUrl = " << outUrl << std::endl;
@@ -598,7 +630,28 @@ void
 LiteHtmlView::set_base_url(const char* base_url)
 {
     if (m_base_url.empty()) {
+        BUrl baseUrl(base_url);
+        if (!baseUrl.IsValid()) {
+            std::cout << "not a valid base URL, ignoring: " << base_url << std::endl;
+            return;
+        }
+        // TODO: test with various paths with and without leafs (files)!
+        /*int32 hostLen = baseUrl.Host().Length();
         m_base_url = base_url;
+        // store full path as base url but leave out leaf if it is a file
+        auto lastSep = m_base_url.find_last_of('/');
+        if (lastSep > 0) {
+            if (lastSep < m_base_url.length()) {
+                // check if leaf is a file - TODO: find a better way than this naive heuristic
+                if (m_base_url.find('.', lastSep + 1) > 0) {
+                    // cut off leaf
+                    m_base_url.erase(lastSep + 1);
+                }
+            }
+        } else {
+            m_base_url.append("/");
+        }*/
+        m_base_url = m_base_url.append(baseUrl.Protocol()).append("://").append(baseUrl.Host()).append("/");
         std::cout << "base url set to: " << m_base_url << std::endl;
     }
 }
@@ -871,7 +924,7 @@ LiteHtmlView::import_css(string& text, const string& url, string& baseUrl)
 	make_url(url.c_str(), baseUrl.c_str(), absoluteUrl);
 
 	std::cout << "import_css from " << absoluteUrl.UrlString() << std::endl;
-	text = FetchHttpContent(absoluteUrl);
+	text.assign(FetchUrlContent(absoluteUrl));
 }
 
 void

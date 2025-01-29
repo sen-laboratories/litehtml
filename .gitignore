@@ -41,3 +41,4 @@ objects.*
 CMakeFiles/*
 CMakeCache.txt
 src/*/CMakeFiles/*
+install_manifest.txt

@@ -41,10 +41,10 @@ public:
 
     const BRect&                        GetClientRect();
 
-    void				        		RenderHtml(const BString& htmlText, const char* masterStylesPath = NULL, const char* userStylesPath = NULL);
+    void				        		RenderHtml(const char* htmlText, const char* masterStylesPath = NULL, const char* userStylesPath = NULL);
     void						        RenderUrl(const BUrl& url, const char* masterStylesPath = NULL, const char* userStylesPath = NULL);
     void                                RenderUrl(const char* fileOrHttpUrl, const char* masterStylesPath = NULL, const char* userStylesPath = NULL);
-    const BString&                      FetchHttpContent(const BUrl& fileOrHttpUrl);
+    const std::string                   FetchUrlContent(const BUrl& fileOrHttpUrl);
 
 	virtual litehtml::uint_ptr		    create_font(const char* faceName, int size, int weight, litehtml::font_style italic, unsigned int decoration, litehtml::font_metrics* fm) override;
 	virtual void						delete_font(litehtml::uint_ptr hFont) override;
@@ -97,8 +97,8 @@ public:
 
 protected:
 	void								make_url(const char* relativeUrl, const char* baseUrl, BUrl& outUrl);
-    const BString&                      FetchLocalContentFromFile(const BUrl& fileOrHttpUrl);
-    const BString&                      FetchRemoteContentFromUrl(const BUrl& fileOrHttpUrl);
+    const std::string                   FetchLocalContent(const BUrl& fileUrl);
+    const std::string                   FetchRemoteContent(const BUrl& httpUrl);
 
 private:
     BPrivate::Network::BHttpSession*    fHttpSession;

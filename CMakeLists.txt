@@ -199,6 +199,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC gumbo)
 
 IF(HAIKU)
     target_link_libraries(${PROJECT_NAME} PUBLIC netservices2)
+    set(CMAKE_INSTALL_PREFIX "/boot/home/config/non-packaged")
 ENDIF(HAIKU)
 
 # install and export
