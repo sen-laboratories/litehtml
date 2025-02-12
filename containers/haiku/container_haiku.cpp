@@ -13,6 +13,7 @@
 #include <Application.h>
 #include <Bitmap.h>
 #include <Cursor.h>
+#include <DataIO.h>
 #include <String.h>
 #include <Entry.h>
 #include <File.h>
@@ -21,7 +22,6 @@
 #include <TranslationUtils.h>
 
 #include <private/netservices2/ExclusiveBorrow.h>
-#include <private/netservices2/HttpFields.h>
 #include <private/netservices2/HttpRequest.h>
 #include <private/netservices2/HttpResult.h>
 #include <private/netservices2/NetServicesDefs.h>
@@ -34,6 +34,7 @@ using BPrivate::Network::BHttpMethod;
 using BPrivate::Network::BHttpRequest;
 using BPrivate::Network::BHttpResult;
 using BPrivate::Network::BHttpSession;
+using BPrivate::Network::BHttpStatus;
 using BPrivate::Network::BNetworkRequestError;
 using BPrivate::Network::make_exclusive_borrow;
 
@@ -200,33 +201,13 @@ const std::string
 LiteHtmlView::FetchRemoteContent(const BUrl& httpUrl)
 {
     std::cout << "  fetching REMOTE resource from URL " << httpUrl.UrlString() << "..." << std::endl;
+    auto request = BHttpRequest(httpUrl);
+	auto body = make_exclusive_borrow<BMallocIO>();
+    BHttpStatus  status;
 
     try {
-        auto request = BHttpRequest(httpUrl);
-        auto body = make_exclusive_borrow<BMallocIO>();
         auto result = fHttpSession->Execute(std::move(request), BBorrow<BDataIO>(body));
-
-        // the Status() call will block until full response has been received
-        if (result.Status().code >= 200 && result.Status().code <= 400) {
-            result.Body();  // we need to block here to make sure the Borrow buffer is released!
-            auto bodyString = new std::string(reinterpret_cast<const char*>(body->Buffer()), body->BufferLength());
-            bool hasBody = ! bodyString->empty();
-
-            std::cout << "  SUCCESS, got " << (! hasBody ? "EMPTY " : "") << "response ";
-            if (hasBody) {
-                std::cout << "with BODY (" << bodyString->length() << " bytes)";
-            }
-            std::cout << " and status " << result.Status().code << ": " << result.Status().text << std::endl;
-
-            return *(bodyString);
-        }
-        else
-        {
-            std::cout << "  HTTP error " << result.Status().code
-                      << " reading from URL " << httpUrl << " - "
-                      << result.Status().text << std::endl;
-            return std::string();
-        }
+        status = result.Status();
     } catch (const BPrivate::Network::BNetworkRequestError& err) {
         std::cout << "  network ERROR " << err.ErrorCode()
           << " reading from URL " << httpUrl << " - "
@@ -235,28 +216,48 @@ LiteHtmlView::FetchRemoteContent(const BUrl& httpUrl)
 
         return std::string();
     }
+    // the Status() call will block until full response has been received
+    if (status.code >= 200 && status.code <= 400) {
+        std::cout << "  HTTP result OK: " << status.code << std::endl;
+        try {
+            auto bodyString = new std::string(reinterpret_cast<const char*>(body->Buffer()), body->BufferLength());
+            bool hasBody = ! bodyString->empty();
+
+            std::cout << "  SUCCESS, got " << (! hasBody ? "EMPTY " : "") << "response ";
+            if (hasBody) {
+                std::cout << "with BODY (" << bodyString->length() << " bytes)";
+            }
+            std::cout << " and status " << status.code << ": " << status.text << std::endl;
+
+            return *(bodyString);
+         } catch (const BPrivate::Network::BBorrowError& err) {
+            std::cout << "  BorrowError: " << err.Message() << ", origin: " << err.Origin() << std::endl;
+         }
+    } else {
+        std::cout << "  HTTP error " << status.code
+                  << " reading from URL " << httpUrl << " - "
+                  << status.text << std::endl;
+    }
+    return std::string();
 }
 
 void
-LiteHtmlView::Draw(BRect b)
+LiteHtmlView::Draw(BRect bounds)
 {
 	std::cout << "DRAW CALLED" << std::endl;
-
-	BRect bounds(Bounds());
 	FillRect(bounds, B_SOLID_LOW);
 
 	// b is only part of the window, but we need to draw the whole lot
     // TODO: still see how we can optimize this, clipping is wrong, view too large
 
 	if (NULL != m_doc) {
-		BPoint leftTop = bounds.LeftTop();
-		position clip(leftTop.x, leftTop.y, bounds.Width(), bounds.Height());
+		position clip(bounds.left, bounds.top, bounds.Width(), bounds.Height());
 		m_doc.get()->render(bounds.Width());
 		m_doc.get()->draw((uint_ptr) this, 0, 0, &clip);
 	}
 
     std::cout << "DRAW FINISHED, sending HTML RENDERED notice." << std::endl;
-	SendNotices(M_HTML_RENDERED,new BMessage(M_HTML_RENDERED));
+	SendNotices(M_HTML_RENDERED);
 }
 
 void LiteHtmlView::MouseDown(BPoint where)
@@ -270,11 +271,12 @@ void LiteHtmlView::MouseDown(BPoint where)
         return;
     }
 
-    // hand over mouse event to LiteHtml so we get invoked on our on_xx later
-    litehtml::position::vector redrawBoxes;
-    BRect client = GetClientRect();
+    // hand over mouse event to LiteHtml so we get invoked on our on_xx callbacks later
+    auto redrawBoxes = position::vector();
+    position client;
+    get_client_rect(client);
 
-    bool redraw = m_doc.get()->on_lbutton_down(where.x, where.y, client.left, client.top, redrawBoxes);
+    bool redraw = m_doc.get()->on_lbutton_down(where.x, where.y, client.x, client.y, redrawBoxes);
 
     if (redraw) {
         std::cout << "  redraw boxes..." << std::endl;
@@ -516,7 +518,7 @@ LiteHtmlView::draw_list_marker( uint_ptr hdc,
 }
 
 void
-LiteHtmlView::load_image(const char* src, const char* baseUrl, bool redraw_on_ready )
+LiteHtmlView::load_image(const char* src, const char* baseUrl, bool redraw_on_ready)
 {
 	std::cout << "load_image" << std::endl;
 
@@ -537,33 +539,16 @@ LiteHtmlView::load_image(const char* src, const char* baseUrl, bool redraw_on_re
         else {
 			std::cout << "    FETCHED image data (" << imageData.length() << " bytes) from " << absoluteUrl
                       << ", translating..." << std::endl;
-            /*TEST */
-            BString path("/tmp/litehtml/");
-            BString name(absoluteUrl.Path());
-            if (int32 index = name.FindLast('/') > 0) {
-                name.Remove(0, index);   // including / char
-            }
-            path.Append(name.String());
 
-            std::cout << "    writing image to " << path.String() << std::endl;
-            BFile imgFile(path.String(), B_READ_WRITE | B_CREATE_FILE);
-            status_t result = imgFile.WriteExactly(imageData.c_str(), imageData.length());
-
-            if (result != B_OK) {
-                std::cout << "    error writing image " << path.String() << ": " << strerror(result) << std::endl;
-            } else {
-                imgFile.Flush();
-                std::cout << "    SUCCESSfully wrote image " << path.String() << std::endl;
-            }
-            // TEST END */
             BMemoryIO memBuffer(imageData.c_str(), imageData.length());
 			BBitmap* img = BTranslationUtils::GetBitmap(&memBuffer);
             m_images[urlKey] = img;
+
             // we always save above to avoid subsequent cache misses and attempts to redownload the image
             if (img == NULL) {
                 std::cout << "      could not handle image " << absoluteUrl << std::endl;
             } else {
-                if (!img->IsValid()) {
+                if (! (img->IsValid()) ) {
                     std::cout << "      WARN: invalid Bitmap!";
                 } else {
                     BRect imgBounds = img->Bounds();
@@ -611,10 +596,6 @@ LiteHtmlView::make_url(const char* relativeUrl, const char* baseUrl, BUrl& outUr
     if (BUrl(relativeUrl).HasHost()) {
         outUrl = relativeUrl;
     } else {
-        /*BString path(relativeUrl);
-        if (path.StartsWith(".")) {
-            path.RemoveFirst("./");
-        }*/
         BString urlStr(baseUrl);
         BString pathStr(relativeUrl);
         if (pathStr.StartsWith("/")) {
@@ -635,22 +616,6 @@ LiteHtmlView::set_base_url(const char* base_url)
             std::cout << "not a valid base URL, ignoring: " << base_url << std::endl;
             return;
         }
-        // TODO: test with various paths with and without leafs (files)!
-        /*int32 hostLen = baseUrl.Host().Length();
-        m_base_url = base_url;
-        // store full path as base url but leave out leaf if it is a file
-        auto lastSep = m_base_url.find_last_of('/');
-        if (lastSep > 0) {
-            if (lastSep < m_base_url.length()) {
-                // check if leaf is a file - TODO: find a better way than this naive heuristic
-                if (m_base_url.find('.', lastSep + 1) > 0) {
-                    // cut off leaf
-                    m_base_url.erase(lastSep + 1);
-                }
-            }
-        } else {
-            m_base_url.append("/");
-        }*/
         m_base_url = m_base_url.append(baseUrl.Protocol()).append("://").append(baseUrl.Host()).append("/");
         std::cout << "base url set to: " << m_base_url << std::endl;
     }
@@ -663,26 +628,33 @@ LiteHtmlView::get_image_size(const char* src, const char* baseUrl, size& sz)
 	make_url(src, baseUrl, url);
 
     uint32 imgKey = url.UrlString().HashValue();
+    std::cout << "get_image_size for image with key " << imgKey << ": ";
 
     auto imgIter = m_images.find(imgKey);
+    if (imgIter == m_images.end()) {
+        std::cout << "    >> not yet loaded..." << std::endl;
+        load_image(src, baseUrl, false);
+        // try again
+        imgIter = m_images.find(imgKey);
+    }
     if (imgIter != m_images.end() && imgIter->second != NULL) {
         BBitmap* img = (BBitmap*)imgIter->second;
         if (img) {
-            std::cout << "get_image_size for image " << url << ": ";
             BRect size = img->Bounds();
             sz.width = size.Width();
             sz.height = size.Height();
             std::cout << "  width = " << sz.width << ", height = " << sz.height << std::endl;
         } else {
-            std::cout << "    could not get image size for image src " << url << std::endl;
+            std::cout << "    could not get image size for image with key " << imgKey << ": invalid Bitmap!" << std::endl;
             sz.width = 0;
             sz.height = 0;
         }
+    } else {
+        std::cout << "    ERROR getting image size, image not found!" << std::endl;
     }
 }
 
-void
-LiteHtmlView::draw_image(uint_ptr hdc, const background_layer& layer, const std::string& url, const std::string& base_url)
+void LiteHtmlView::draw_image(uint_ptr hdc, const background_layer& layer, const std::string& url, const std::string& base_url)
 {
 	const auto& img = m_images.find(BString::HashValue(url.c_str()));
 
@@ -855,12 +827,10 @@ void
 LiteHtmlView::get_client_rect(position& client) const
 {
 	BRect bounds(Bounds());
-	BPoint leftTop = bounds.LeftTop();
-
 	client.width = bounds.IntegerWidth();
 	client.height = bounds.IntegerHeight();
-	client.x = leftTop.x;
-	client.y = leftTop.y;
+	client.x = bounds.left;
+	client.y = bounds.top;
 }
 
 void LiteHtmlView::on_mouse_event(const element::ptr& el, mouse_event event)
@@ -874,15 +844,17 @@ LiteHtmlView::on_anchor_click(const char* url, const element::ptr& anchor)
     BUrl href;
     make_url(url, NULL, href);
 
-	std::cout << "on_anchor_click: url = " << href.UrlString()<< std::endl;
+	std::cout << "on_anchor_click: url = " << href.UrlString() << std::endl;
     BPoint location;
     uint32 buttons;
     GetMouse(&location, &buttons);
 
-    BMessage msg(M_ANCHOR_CLICKED);
+    BMessage msg(B_OBSERVER_NOTICE_CHANGE);
+    msg.AddUInt32(B_OBSERVE_ORIGINAL_WHAT, M_ANCHOR_CLICKED);
     msg.AddUInt32("buttons", buttons);
     msg.AddPoint("where", location);
     msg.AddString("href", href.UrlString());
+
     // get anchor
     if (href.HasFragment()) {
         msg.AddString("fragment", href.Fragment());
