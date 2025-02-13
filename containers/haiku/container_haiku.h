@@ -25,6 +25,7 @@ enum {
     // field 'buttons' contains mouse buttons on click (for context menu support)
     // field 'where' contains the location of the mouse click
     // field 'href' contains the absolute target URI
+    // field 'title' contains the link title
     // field 'targetId' contains the target anchor ID if applicable
     // field 'targetPos' contains the target anchor's position if applicable
     M_ANCHOR_CLICKED  = 'hanc'
@@ -106,6 +107,8 @@ private:
 	std::map<uint32 ,BBitmap*>          m_images;
 	litehtml::string		            m_base_url;
 	litehtml::string					m_url;
+    uint32                              fMouseButtons;
+    BPoint                              fMouseLocation;
 };
 
 #endif

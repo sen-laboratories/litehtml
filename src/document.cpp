@@ -1,5 +1,3 @@
-#include <iostream>
-
 #include "document.h"
 #include "document_container.h"
 #include "stylesheet.h"
@@ -715,9 +713,6 @@ void document::add_stylesheet( const char* str, const char* baseurl, const char*
 
 bool document::on_mouse_over( int x, int y, int client_x, int client_y, position::vector& redraw_boxes )
 {
-    std::cout << "document::on_mouse_over: x=" << x << ", y=" << y
-              << ", client_x=" << client_x << ", client_y=" << client_y << std::endl;
-
 	if(!m_root || !m_root_render)
 	{
 		return false;
@@ -763,8 +758,6 @@ bool document::on_mouse_over( int x, int y, int client_x, int client_y, position
 
 bool document::on_mouse_leave( position::vector& redraw_boxes )
 {
-    std::cout << "document::on_mouse_leave" << std::endl;
-
 	if(!m_root || !m_root_render)
 	{
 		return false;
@@ -782,9 +775,6 @@ bool document::on_mouse_leave( position::vector& redraw_boxes )
 
 bool document::on_lbutton_down( int x, int y, int client_x, int client_y, position::vector& redraw_boxes )
 {
-    std::cout << "document::on_lbutton_down: x=" << x << ", y=" << y
-              << ", client_x=" << client_x << ", client_y=" << client_y << std::endl;
-
 	if(!m_root || !m_root_render)
 	{
         printf("document::on_lbutton_down: nothing rendered yet, aborting.\n");
@@ -792,7 +782,6 @@ bool document::on_lbutton_down( int x, int y, int client_x, int client_y, positi
 	}
 
 	element::ptr over_el = m_root_render->get_element_by_point(x, y, client_x, client_y);
-    std::cout << "document::on_lbutton_down: clicked element " << over_el->id() << std::endl;
 
 	bool state_was_changed = false;
 
@@ -840,8 +829,6 @@ bool document::on_lbutton_down( int x, int y, int client_x, int client_y, positi
 
 bool document::on_lbutton_up( int /*x*/, int /*y*/, int /*client_x*/, int /*client_y*/, position::vector& redraw_boxes )
 {
-    std::cout << "document::on_lbutton_up" << std::endl;
-
 	if(!m_root || !m_root_render)
 	{
 		return false;

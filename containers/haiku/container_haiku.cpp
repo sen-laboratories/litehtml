@@ -56,6 +56,11 @@ LiteHtmlView::LiteHtmlView(BRect frame, const char *name)
 LiteHtmlView::~LiteHtmlView()
 {
     delete fHttpSession;
+    m_doc = NULL;
+    for (auto img : m_images) {
+        delete img.second;
+    }
+    m_images.clear();
 }
 
 void
@@ -252,11 +257,13 @@ LiteHtmlView::Draw(BRect bounds)
 	// b is only part of the window, but we need to draw the whole lot
     // TODO: still see how we can optimize this, clipping is wrong, view too large
 
-	if (NULL != m_doc) {
+	if (m_doc != NULL) {
 		position clip(bounds.left, bounds.top, bounds.Width(), bounds.Height());
 		m_doc.get()->render(bounds.Width());
 		m_doc.get()->draw((uint_ptr) this, 0, 0, &clip);
-	}
+	} else {
+        std::cout << "  NO DOC - nothing to draw!" << std::endl;
+    }
 
     std::cout << "DRAW FINISHED, sending HTML RENDERED notice." << std::endl;
 	SendNotices(M_HTML_RENDERED);
@@ -264,12 +271,9 @@ LiteHtmlView::Draw(BRect bounds)
 
 void LiteHtmlView::MouseDown(BPoint where)
 {
-    BPoint absoluteLoc;
-    uint32 buttons;
-    GetMouse(&absoluteLoc, &buttons);
-
-    if (! (buttons | B_PRIMARY_MOUSE_BUTTON) ) {
-        std::cout << "BView::MouseDown right/middle click, skipping." << std::endl;
+    GetMouse(&fMouseLocation, &fMouseButtons);
+    if (m_doc == NULL) {
+        // document not yet rendered, nothing to do
         return;
     }
 
@@ -291,15 +295,10 @@ void LiteHtmlView::MouseDown(BPoint where)
 
 void LiteHtmlView::MouseUp(BPoint where)
 {
-    BPoint absoluteLoc;
-    uint32 buttons;
-    GetMouse(&absoluteLoc, &buttons);
-
-    if (! (buttons | B_PRIMARY_MOUSE_BUTTON) ) {
-        std::cout << "BView::MouseUp right/middle click, skipping." << std::endl;
+    if (m_doc == NULL) {
+        // document not yet rendered, nothing to do
         return;
     }
-
     // hand over mouse event to LiteHtml so we get invoked on our on_xx later
     litehtml::position::vector redrawBoxes;
     BRect client = GetClientRect();
@@ -318,21 +317,21 @@ void LiteHtmlView::MouseUp(BPoint where)
 // hand over mouse event to LiteHtml so we get invoked on our on_xx later
 void LiteHtmlView::MouseMoved(BPoint where, uint32 code, const BMessage *dragMessage)
 {
+    if (m_doc == NULL) {
+        // document not yet rendered, nothing to do
+        return;
+    }
     BPoint client = ConvertToParent(where);
     litehtml::position::vector redrawBoxes;
     bool redraw;
 
     switch(code) {
-        case B_ENTERED_VIEW:
         case B_INSIDE_VIEW:
             redraw = m_doc.get()->on_mouse_over(where.x, where.y, client.x, client.y, redrawBoxes);
             break;
         case B_EXITED_VIEW:
-        case B_OUTSIDE_VIEW:
-            redraw = m_doc->on_mouse_leave(redrawBoxes);
+            redraw = m_doc.get()->on_mouse_leave(redrawBoxes);
             break;
-        default:
-            std::cout << "unsupported/unknown code " << code << ", skipping." << std::endl;
     }
 
     if (redraw) {
@@ -347,8 +346,7 @@ void LiteHtmlView::MouseMoved(BPoint where, uint32 code, const BMessage *dragMes
 void
 LiteHtmlView::GetPreferredSize(float* width,float* height)
 {
-	if (NULL == m_doc)
-	{
+	if (m_doc == NULL) {
 		BRect bounds(Bounds());
 		*width = bounds.Width();
 		*height = bounds.Height();
@@ -571,7 +569,6 @@ LiteHtmlView::make_url(const char* relativeUrl, const char* baseUrl, BUrl& outUr
         baseUrl = m_base_url.c_str();
     }
     if (relativeUrl == NULL) relativeUrl = "";
-    std::cout << "make_url: base url = " << baseUrl;
 
     // TODO: handle data: URLs, e.g. data:image/svg+xml,... (URL escaped data like %3Csvg for <sgv)
     // see https://gist.github.com/jennyknuth/222825e315d45a738ed9d6e04c7a88d0
@@ -582,18 +579,17 @@ LiteHtmlView::make_url(const char* relativeUrl, const char* baseUrl, BUrl& outUr
         int32 dataPrefixLen = dataPrefix.Length();
         int32 separatorOffset = relativeOrDataUrl.FindFirst(',', dataPrefixLen);
         if (separatorOffset < 0) {
-            std::cout << ", data URL with illegal/unsupported format separator: "
+            std::cout << "make_url: data URL with illegal/unsupported format separator: "
                       << relativeOrDataUrl.TruncateChars(32) << std::endl;
         }
         BString dataFormat;
         relativeOrDataUrl.CopyCharsInto(dataFormat, dataPrefixLen, separatorOffset - dataPrefixLen);
-        std::cout << ", data URL detected, format = " << dataFormat << std::endl;
+        std::cout << "make_url: data URL detected, format = " << dataFormat << std::endl;
         // TODO: what to do? caller must handle (probably already before calling this function)
         outUrl = BUrl(baseUrl);
         return;
-    } else {
-        std::cout << ", relative path = " << relativeUrl << std::endl;
     }
+
     // check for absolute URL in path
     if (BUrl(relativeUrl).HasHost()) {
         outUrl = relativeUrl;
@@ -605,8 +601,6 @@ LiteHtmlView::make_url(const char* relativeUrl, const char* baseUrl, BUrl& outUr
         }
         outUrl = urlStr.Append(pathStr).String();
     }
-	std::cout << "output url is " << (outUrl.IsValid() ? "valid" : "invalid!")
-              << ", outUrl = " << outUrl << std::endl;
 }
 
 void
@@ -630,11 +624,10 @@ LiteHtmlView::get_image_size(const char* src, const char* baseUrl, size& sz)
 	make_url(src, baseUrl, url);
 
     uint32 imgKey = url.UrlString().HashValue();
-    std::cout << "get_image_size for image with key " << imgKey << ": ";
-
     auto imgIter = m_images.find(imgKey);
+
     if (imgIter == m_images.end()) {
-        std::cout << "    >> not yet loaded..." << std::endl;
+        std::cout << "get_image_size: image not yet loaded, fetching..." << std::endl;
         load_image(src, baseUrl, false);
         // try again
         imgIter = m_images.find(imgKey);
@@ -645,14 +638,13 @@ LiteHtmlView::get_image_size(const char* src, const char* baseUrl, size& sz)
             BRect size = img->Bounds();
             sz.width = size.Width();
             sz.height = size.Height();
-            std::cout << "  width = " << sz.width << ", height = " << sz.height << std::endl;
         } else {
-            std::cout << "    could not get image size for image with key " << imgKey << ": invalid Bitmap!" << std::endl;
+            std::cout << "get_image_size: could not get image size for image with key " << imgKey << ": invalid Bitmap!" << std::endl;
             sz.width = 0;
             sz.height = 0;
         }
     } else {
-        std::cout << "    ERROR getting image size, image not found!" << std::endl;
+        std::cout << "get_image_size: ERROR getting image size, image not found!" << std::endl;
     }
 }
 
@@ -815,8 +807,7 @@ LiteHtmlView::get_media_features(media_features& media) const
 void
 LiteHtmlView::link(const std::shared_ptr<document> &ptr, const element::ptr& el)
 {
-    const char* href = el->get_attr("href", "");
-	std::cout << "adding link [href = '" << href << "']" << std::endl;
+    // nothing to do, may be used for debugging
 }
 
 void
@@ -846,16 +837,16 @@ LiteHtmlView::on_anchor_click(const char* url, const element::ptr& anchor)
     BUrl href;
     make_url(url, NULL, href);
 
-	std::cout << "on_anchor_click: url = " << href.UrlString() << std::endl;
-    BPoint location;
-    uint32 buttons;
-    GetMouse(&location, &buttons);
-
     BMessage msg(B_OBSERVER_NOTICE_CHANGE);
     msg.AddUInt32(B_OBSERVE_ORIGINAL_WHAT, M_ANCHOR_CLICKED);
-    msg.AddUInt32("buttons", buttons);
-    msg.AddPoint("where", location);
+    msg.AddUInt32("buttons", fMouseButtons);
+    msg.AddPoint("where", fMouseLocation);
     msg.AddString("href", href.UrlString());
+
+    // add link text as title
+    string title;
+    anchor->get_text(title);
+    msg.AddString("title", title.c_str());
 
     // get anchor
     if (href.HasFragment()) {
@@ -876,7 +867,6 @@ LiteHtmlView::on_anchor_click(const char* url, const element::ptr& anchor)
 void
 LiteHtmlView::set_cursor(const char* cursor)
 {
-	std::cout << "set_cursor: " << cursor << std::endl;
     // TODO: implement lookup map between CSS properties and BCursorIDs,
     //  see: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor and
     //       https://www.haiku-os.org/docs/api/Cursor_8h.html#a4e11bd0710deda12dc6d363e424fda3b
