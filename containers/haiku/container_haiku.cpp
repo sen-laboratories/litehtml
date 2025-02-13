@@ -202,12 +202,14 @@ LiteHtmlView::FetchRemoteContent(const BUrl& httpUrl)
 {
     std::cout << "  fetching REMOTE resource from URL " << httpUrl.UrlString() << "..." << std::endl;
     auto request = BHttpRequest(httpUrl);
+    request.SetTimeout(3000 /*ms*/);
 	auto body = make_exclusive_borrow<BMallocIO>();
     BHttpStatus  status;
 
     try {
-        auto result = fHttpSession->Execute(std::move(request), BBorrow<BDataIO>(body));
+        auto result = fHttpSession->Execute(std::move(request), BBorrow<BDataIO>(body), this);
         status = result.Status();
+        result.Body();  // synchronize with BBorrow buffer (see HttpSession::Execute docs)
     } catch (const BPrivate::Network::BNetworkRequestError& err) {
         std::cout << "  network ERROR " << err.ErrorCode()
           << " reading from URL " << httpUrl << " - "
@@ -781,7 +783,7 @@ LiteHtmlView::create_element(const char *tag_name,
 							 const string_map &attributes,
 							 const std::shared_ptr<document> &doc)
 {
-    // not implemented (also not in Cairo)
+    // not implemented (also not in Cairo container)
 	return nullptr;
 }
 
@@ -835,7 +837,7 @@ LiteHtmlView::get_client_rect(position& client) const
 
 void LiteHtmlView::on_mouse_event(const element::ptr& el, mouse_event event)
 {
-    std::cout << "on_mouse_event: event = mouse_" << (event == 0 ? "enter" : "leave") << std::endl;
+    // TODO: handle selection
 }
 
 void
@@ -868,8 +870,6 @@ LiteHtmlView::on_anchor_click(const char* url, const element::ptr& anchor)
             msg.AddPoint("fragmentPos", BPoint(0, pos.y));
         }
     }
-    msg.PrintToStream();
-
     SendNotices(M_ANCHOR_CLICKED, new BMessage(msg));
 }
 
@@ -881,10 +881,8 @@ LiteHtmlView::set_cursor(const char* cursor)
     //  see: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor and
     //       https://www.haiku-os.org/docs/api/Cursor_8h.html#a4e11bd0710deda12dc6d363e424fda3b
     if (strncmp(cursor, "pointer", 7) == 0) {
-        std::cout << "  -> link cursor." << std::endl;
         BCursor mouseCursor(B_CURSOR_ID_FOLLOW_LINK);
     } else  {
-        std::cout << "  -> default cursor." << std::endl;
         BCursor mouseCursor(B_CURSOR_ID_SYSTEM_DEFAULT);
     }
 }
