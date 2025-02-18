@@ -8,7 +8,6 @@
 
 #include <string>
 #include <iostream>
-#include <map>
 
 #include <Application.h>
 #include <Bitmap.h>
@@ -22,11 +21,13 @@
 #include <TranslationUtils.h>
 
 #include <private/netservices2/ExclusiveBorrow.h>
+#include <private/netservices2/HttpFields.h>
 #include <private/netservices2/HttpRequest.h>
 #include <private/netservices2/HttpResult.h>
 #include <private/netservices2/NetServicesDefs.h>
 
 using namespace litehtml;
+using namespace std::literals;
 using BPrivate::Network::BBorrow;
 using BPrivate::Network::BExclusiveBorrow;
 using BPrivate::Network::BHttpFields;
@@ -92,9 +93,9 @@ LiteHtmlView::RenderUrl(const BUrl& url, const char* masterStylesPath, const cha
             std::cout << "  got no absolute URL for remote URL " << url << " - result will be incomplete." << std::endl;
         }
     }
-
-    const string html = FetchUrlContent(url);
-    if (html.length() > 0) {
+    std::string html;
+    status_t result = FetchUrlContent(url, &html);
+    if (result == B_OK) {
         RenderHtml(html.c_str(), masterStylesPath, userStylesPath);
     }
     else {
@@ -122,15 +123,15 @@ LiteHtmlView::RenderHtml(const char* htmlText, const char* masterStylesPath, con
 	}
 }
 
-const std::string
-LiteHtmlView::FetchUrlContent(const BUrl& fileOrHttpUrl)
+status_t
+LiteHtmlView::FetchUrlContent(const BUrl& fileOrHttpUrl, std::string* content)
 {
     std::cout << "FetchHttpContent from URL " << fileOrHttpUrl << std::endl;
 
     bool isFile;
 	if (!fileOrHttpUrl.IsValid()) {
         std::cout << "  Invalid URL: " << fileOrHttpUrl << std::endl;
-        return std::string();
+        return B_BAD_VALUE;
 	} else {
 		// Fetch content according to protocol
 		BString protocol = fileOrHttpUrl.Protocol();
@@ -144,18 +145,18 @@ LiteHtmlView::FetchUrlContent(const BUrl& fileOrHttpUrl)
         else {
             std::cout << "Unknown protocol '" << protocol
 			          << "' for URL: '" << fileOrHttpUrl << "'" << std::endl;
-            return std::string();
+            return B_BAD_VALUE;
         }
     }
     if (isFile) {
-        return FetchLocalContent(fileOrHttpUrl);
+        return FetchLocalContent(fileOrHttpUrl, content);
     } else {
-        return FetchRemoteContent(fileOrHttpUrl);
+        return FetchRemoteContent(fileOrHttpUrl, content);
 	}
 }
 
-const std::string
-LiteHtmlView::FetchLocalContent(const BUrl& fileUrl)
+status_t
+LiteHtmlView::FetchLocalContent(const BUrl& fileUrl, std::string* content)
 {
     std::cout << "  fetching LOCAL resource from URL " << fileUrl << std::endl;
     // Get parent folder for the base url
@@ -176,7 +177,7 @@ LiteHtmlView::FetchLocalContent(const BUrl& fileUrl)
     if (result != B_OK) {
         std::cout << "error opening file '" << htmlPath.Path() << "':"
                   << strerror(result) << std::endl;
-        return std::string();
+        return result;
     }
 
     off_t size;
@@ -184,7 +185,7 @@ LiteHtmlView::FetchLocalContent(const BUrl& fileUrl)
     if (size <= 0) {
         std::cout << "error: empty/invalid file '" << fileUrl << "':"
           << strerror(result) << std::endl;
-        return std::string();
+        return result;
     }
     else
     {
@@ -193,26 +194,34 @@ LiteHtmlView::FetchLocalContent(const BUrl& fileUrl)
         if (bytesRead < 0) {
             std::cout << "error reading from file '" << fileUrl << "':"
               << strerror(result) << std::endl;
-            return NULL;
+            return B_BAD_DATA;
         }
         buffer[size] = '\0';
         htmlFile.Unset();
 
-        return std::string(buffer);
+        *content = buffer;
+        return B_OK;
     }
 }
 
-const std::string
-LiteHtmlView::FetchRemoteContent(const BUrl& httpUrl)
+status_t
+LiteHtmlView::FetchRemoteContent(const BUrl& httpUrl, std::string* resultBody)
 {
-    std::cout << "  fetching REMOTE resource from URL " << httpUrl.UrlString() << "..." << std::endl;
+    std::cout << "fetching REMOTE resource from URL " << httpUrl.UrlString() << "..." << std::endl;
     auto request = BHttpRequest(httpUrl);
     request.SetTimeout(3000 /*ms*/);
+/*
+    auto fields = request.Fields();
+    fields.AddField("User-Agent"sv, "Haiku Liblitehtml"sv); */
+//    fields.AddField("Accept"sv, "*/*"sv);
+
 	auto body = make_exclusive_borrow<BMallocIO>();
     BHttpStatus  status;
 
     try {
-        auto result = fHttpSession->Execute(std::move(request), BBorrow<BDataIO>(body), this);
+        auto result = fHttpSession->Execute(std::move(request), BBorrow<BDataIO>(body));
+        // the Status() call will block until full response has been received
+        std::cout << "  waiting for result..." << std::endl;
         status = result.Status();
         result.Body();  // synchronize with BBorrow buffer (see HttpSession::Execute docs)
     } catch (const BPrivate::Network::BNetworkRequestError& err) {
@@ -221,31 +230,31 @@ LiteHtmlView::FetchRemoteContent(const BUrl& httpUrl)
           << err.Message() << ", detail: "
           << err.DebugMessage() << std::endl;
 
-        return std::string();
+        return err.ErrorCode();
     }
-    // the Status() call will block until full response has been received
     if (status.code >= 200 && status.code <= 400) {
         std::cout << "  HTTP result OK: " << status.code << std::endl;
         try {
-            auto bodyString = new std::string(reinterpret_cast<const char*>(body->Buffer()), body->BufferLength());
-            bool hasBody = ! bodyString->empty();
+            *resultBody = std::string(reinterpret_cast<const char*>(body->Buffer()), body->BufferLength());
+            bool hasBody = ! (resultBody->empty());
 
             std::cout << "  SUCCESS, got " << (! hasBody ? "EMPTY " : "") << "response ";
             if (hasBody) {
-                std::cout << "with BODY (" << bodyString->length() << " bytes)";
+                std::cout << "with BODY (" << resultBody->size() << " chars)";
             }
             std::cout << " and status " << status.code << ": " << status.text << std::endl;
 
-            return *(bodyString);
          } catch (const BPrivate::Network::BBorrowError& err) {
             std::cout << "  BorrowError: " << err.Message() << ", origin: " << err.Origin() << std::endl;
+            return B_ERROR;
          }
     } else {
         std::cout << "  HTTP error " << status.code
                   << " reading from URL " << httpUrl << " - "
                   << status.text << std::endl;
+        return B_ERROR;
     }
-    return std::string();
+    return B_OK;
 }
 
 void
@@ -531,17 +540,20 @@ LiteHtmlView::load_image(const char* src, const char* baseUrl, bool redraw_on_re
 
 	if (m_images.find(urlKey) == m_images.end()) {
         std::cout << "   image not yet in cache, fetching..." << std::endl;
-        const string imageData = FetchUrlContent(absoluteUrl);
-        if (imageData.length() == 0) {
+        std::string imageData;
+        status_t result = FetchUrlContent(absoluteUrl, &imageData);
+        if (result != B_OK) {
             std::cout << "    no valid image data received, skipping." << std::endl;
             return;
         }
         else {
-			std::cout << "    FETCHED image data (" << imageData.length() << " bytes) from " << absoluteUrl
+            int32 dataSize = imageData.length();
+			std::cout << "    FETCHED image data (" << dataSize << " bytes) from " << absoluteUrl
                       << ", translating..." << std::endl;
 
-            BMemoryIO memBuffer(imageData.c_str(), imageData.length());
+            BMemoryIO memBuffer(imageData.c_str(), dataSize);
 			BBitmap* img = BTranslationUtils::GetBitmap(&memBuffer);
+
             m_images[urlKey] = img;
 
             // we always save above to avoid subsequent cache misses and attempts to redownload the image
@@ -884,7 +896,12 @@ LiteHtmlView::import_css(string& text, const string& url, string& baseUrl)
 	make_url(url.c_str(), baseUrl.c_str(), absoluteUrl);
 
 	std::cout << "import_css from " << absoluteUrl.UrlString() << std::endl;
-	text.assign(FetchUrlContent(absoluteUrl));
+    std::string cssData;
+    status_t result = FetchUrlContent(absoluteUrl, &cssData);
+    if (result != B_OK) {
+        std::cerr << "error importing CSS: " << strerror(result) << std::endl;
+    }
+	text.assign(cssData.c_str());
 }
 
 void
